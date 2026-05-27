@@ -22,6 +22,10 @@ if sys.stdout is None or sys.stderr is None:
     sys.stdout = _log
     sys.stderr = _log
 
+import asyncio
+if platform.system() == "Windows":
+    asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
+
 import httpx
 import psutil
 import pyautogui
