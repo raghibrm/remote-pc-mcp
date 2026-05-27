@@ -18,6 +18,11 @@ Use it to give Claude Code full control over a remote machine: a gaming PC with 
 | `kill_process` | Terminate a process by PID |
 | `download_file` | Download a URL directly to this machine (models, datasets, etc.) |
 | `take_screenshot` | Capture the primary display — returns base64-encoded PNG |
+| `click` | Click at screen coordinates `(x, y)` — left / right / middle, single or multi-click |
+| `move_mouse` | Move cursor to `(x, y)`, optionally animated |
+| `type_text` | Type a string into the focused window |
+| `press_key` | Press a single key or hotkey combo (e.g. `enter`, `f11`, `ctrl+c`, `win+d`) |
+| `scroll` | Scroll the mouse wheel up or down, optionally at a specific point |
 
 ## Requirements
 

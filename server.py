@@ -3,7 +3,8 @@
 remote-pc-mcp — expose a PC's capabilities as MCP tools for Claude Code or any MCP client.
 
 Tools: shell_exec, read_file, write_file, list_directory, system_info,
-       start_process, get_process_output, kill_process, download_file, take_screenshot
+       start_process, get_process_output, kill_process, download_file, take_screenshot,
+       click, move_mouse, type_text, press_key, scroll
 """
 
 import base64
@@ -23,6 +24,7 @@ if sys.stdout is None or sys.stderr is None:
 
 import httpx
 import psutil
+import pyautogui
 import uvicorn
 from dotenv import load_dotenv
 from mcp.server.fastmcp import FastMCP
@@ -32,6 +34,8 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
 from starlette.responses import JSONResponse
 from starlette.routing import Mount, Route
+
+pyautogui.FAILSAFE = False  # disable corner-hit abort; we're driving remotely
 
 load_dotenv()
 
@@ -296,6 +300,63 @@ $g.Dispose(); $b.Dispose()
 
     data = base64.b64encode(Path(save_path).read_bytes()).decode()
     return {"success": True, "path": save_path, "image_base64": data, "format": "png"}
+
+
+# ── UI control (pyautogui) ──────────────────────────────────────────────────
+
+@mcp.tool()
+def click(x: int, y: int, button: str = "left", clicks: int = 1) -> dict:
+    """Click at screen coordinates (x, y). button = 'left' | 'right' | 'middle'."""
+    try:
+        pyautogui.click(x=x, y=y, clicks=clicks, button=button)
+        return {"success": True, "x": x, "y": y, "button": button, "clicks": clicks}
+    except Exception as e:
+        return {"error": str(e)}
+
+
+@mcp.tool()
+def move_mouse(x: int, y: int, duration: float = 0.0) -> dict:
+    """Move the cursor to (x, y). duration > 0 animates the movement."""
+    try:
+        pyautogui.moveTo(x=x, y=y, duration=duration)
+        return {"success": True, "x": x, "y": y}
+    except Exception as e:
+        return {"error": str(e)}
+
+
+@mcp.tool()
+def type_text(text: str, interval: float = 0.0) -> dict:
+    """Type a string into the focused window. interval = seconds between keys."""
+    try:
+        pyautogui.typewrite(text, interval=interval)
+        return {"success": True, "length": len(text)}
+    except Exception as e:
+        return {"error": str(e)}
+
+
+@mcp.tool()
+def press_key(key: str) -> dict:
+    """Press a single key or hotkey combo. Examples: 'enter', 'f11', 'ctrl+c', 'win+d'."""
+    try:
+        if "+" in key:
+            pyautogui.hotkey(*[k.strip() for k in key.split("+")])
+        else:
+            pyautogui.press(key)
+        return {"success": True, "key": key}
+    except Exception as e:
+        return {"error": str(e)}
+
+
+@mcp.tool()
+def scroll(amount: int, x: Optional[int] = None, y: Optional[int] = None) -> dict:
+    """Scroll the mouse wheel. Positive = up, negative = down. Optional (x, y) anchors at coords."""
+    try:
+        if x is not None and y is not None:
+            pyautogui.moveTo(x, y)
+        pyautogui.scroll(amount)
+        return {"success": True, "amount": amount}
+    except Exception as e:
+        return {"error": str(e)}
 
 
 # ── Auth middleware ─────────────────────────────────────────────────────────
