@@ -16,6 +16,11 @@ from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
+if sys.stdout is None or sys.stderr is None:
+    _log = open(Path(__file__).with_name("server.log"), "a", encoding="utf-8", buffering=1)
+    sys.stdout = _log
+    sys.stderr = _log
+
 import httpx
 import psutil
 import uvicorn
