@@ -10,3 +10,5 @@ build/
 *.out.txt
 *.err.txt
 *.log
+.state/
+.pytest_cache/

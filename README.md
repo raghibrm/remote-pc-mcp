@@ -1,8 +1,10 @@
 # remote-pc-mcp
 
-An MCP server that exposes a PC's capabilities — shell execution, filesystem, background processes, GPU stats, screenshots, and file transfer — to Claude Code or any MCP client over HTTP.
+An MCP server that exposes a PC's capabilities — shell execution, filesystem, background processes, GPU stats, screenshots, UI control, and file transfer — to Claude Code or any MCP client over **streamable HTTP**.
 
-Use it to give Claude Code full control over a remote machine: a gaming PC with a GPU, a home server, or any box on your network. Once configured, Claude can run commands, manage files, launch training jobs, check GPU utilisation, and take screenshots — all from your main workstation.
+Use it to give Claude Code full control over a remote machine: a gaming PC with a GPU, a home server, or any box on your network. Once configured, Claude can run commands, manage files, launch training jobs, check GPU utilisation, take screenshots, and drive the desktop — all from your main workstation.
+
+The transport is `mcp` SDK's streamable HTTP (`stateless_http=True`), so a server restart does not break already-connected clients. Each request is self-contained — there is no in-memory session that can go stale.
 
 ## Tools
 
@@ -77,7 +79,9 @@ start.bat
 chmod +x start.sh && ./start.sh
 ```
 
-The server starts on port `8765` by default. Check the console for the listening address.
+`start.bat` / `start.sh` restart automatically on a non-zero exit, so a one-off crash will not take the server down. Clean exit (code 0) ends the loop.
+
+The server listens on port `8765` by default. Visit `http://HOST:8765/health` to confirm it is up.
 
 ## Adding to Claude Code
 
@@ -87,8 +91,8 @@ In your Claude Code project's `.mcp.json`:
 {
   "mcpServers": {
     "gaming-pc": {
-      "type": "sse",
-      "url": "http://YOUR_PC_IP_OR_HOSTNAME:8765/sse",
+      "type": "http",
+      "url": "http://YOUR_PC_IP_OR_HOSTNAME:8765/mcp",
       "headers": {
         "Authorization": "Bearer your-long-random-token-here"
       }
@@ -100,7 +104,7 @@ In your Claude Code project's `.mcp.json`:
 For Tailscale users, use your machine's Tailscale hostname:
 
 ```json
-"url": "http://gaming-pc.tail12345.ts.net:8765/sse"
+"url": "http://gaming-pc.tail12345.ts.net:8765/mcp"
 ```
 
 After saving `.mcp.json`, restart Claude Code. The tools will appear automatically.
@@ -115,6 +119,19 @@ After saving `.mcp.json`, restart Claude Code. The tools will appear automatical
 - **LAN only**: if both machines are on the same local network and you trust your LAN, `0.0.0.0` with a strong token is reasonable.
 - **Never expose to the public internet** without TLS and a reverse proxy (nginx, Caddy).
 
+Tokens are compared with `secrets.compare_digest` (constant-time). Errors are passed through a sanitiser that strips absolute paths, the home directory, and the token before being returned to a client.
+
+## Resource limits
+
+Every tool that touches the host is bounded so a single caller cannot OOM or fill the disk. Defaults (override via env, see `.env.example`):
+
+| Var | Default | Applies to |
+|-----|---------|------------|
+| `REMOTE_PC_MCP_MAX_SHELL_TIMEOUT` | 600s | `shell_exec` |
+| `REMOTE_PC_MCP_MAX_READ_BYTES` | 50 MB | `read_file` |
+| `REMOTE_PC_MCP_MAX_WRITE_BYTES` | 50 MB | `write_file` |
+| `REMOTE_PC_MCP_MAX_DOWNLOAD_BYTES` | 2 GB | `download_file` |
+
 ## Auto-start
 
 **Windows — run at login:**
@@ -126,6 +143,8 @@ Action: Start a program
 Program: pythonw
 Arguments: C:\path\to\remote-pc-mcp\server.py
 ```
+
+Under `pythonw.exe` there is no console; the server redirects stdout/stderr to `server.log` automatically.
 
 **Linux — systemd:**
 
@@ -147,11 +166,20 @@ WantedBy=multi-user.target
 sudo systemctl enable --now remote-pc-mcp
 ```
 
-## Screenshot note
+## Tests
 
-On Linux, screenshot requires a display and one of: `scrot`, `gnome-screenshot`, or ImageMagick's `import`. Install scrot with `sudo apt install scrot`.
+A self-contained test suite lives under `tests/`. It launches its own isolated server on a high port with an ephemeral token, exercises every tool, and verifies that a mid-run server restart does not lock the client out.
 
-On Windows, the built-in PowerShell `.NET` approach is used — no extra dependencies needed.
+```bash
+pip install -r requirements-dev.txt
+python -m pytest tests/ -v
+```
+
+The tests do not touch the production server you started with `start.bat` — they spin up their own instance and tear it down.
+
+## Notes on UI-driving tools
+
+`take_screenshot`, `click`, `move_mouse`, `type_text`, `press_key`, and `scroll` require an **interactive desktop session**. On Windows that means a user is logged in and the screen is unlocked; a service running under Session 0 cannot reach the desktop. On Linux you need `scrot`, `gnome-screenshot`, or ImageMagick's `import` installed for screenshots — `sudo apt install scrot` is the easiest.
 
 ## License
 
