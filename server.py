@@ -34,6 +34,7 @@ import secrets
 import subprocess
 import tempfile
 import threading
+import time
 from datetime import datetime
 from logging.handlers import RotatingFileHandler
 from typing import Optional
@@ -51,7 +52,7 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse
 from starlette.routing import Route
 
-__version__ = "0.2.2"
+__version__ = "0.2.3"
 
 pyautogui.FAILSAFE = False  # disable corner-hit abort; we're driving remotely
 load_dotenv()
@@ -607,4 +608,16 @@ if __name__ == "__main__":
         sys.exit("ERROR: REMOTE_PC_MCP_TOKEN not set. Copy .env.example → .env and fill it in.")
     logger.info("remote-pc-mcp v%s starting on %s:%d", __version__, _HOST, _PORT)
     print(f"remote-pc-mcp v{__version__} listening on {_HOST}:{_PORT}")
-    uvicorn.run(_build_app(), host=_HOST, port=_PORT, log_level="info")
+
+    # Wrap the uvicorn server so a transient OSError on accept() (e.g. when the
+    # Tailscale interface briefly loses its bound IP during a network change)
+    # doesn't permanently kill the listener. We log, sleep, and re-bind.
+    config = uvicorn.Config(_build_app(), host=_HOST, port=_PORT, log_level="info")
+    while True:
+        server = uvicorn.Server(config)
+        try:
+            server.run()
+            break
+        except OSError as e:
+            logger.error("Listener died (%s); rebinding in 2s", _safe_error(e))
+            time.sleep(2)

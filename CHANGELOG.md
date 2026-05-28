@@ -4,6 +4,20 @@ All notable changes to this project will be documented here. The format is
 based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this
 project follows semver from 0.2.0 onward.
 
+## [0.2.3] — 2026-05-28
+
+### Fixed
+- Server listener becoming permanently unresponsive after a Tailscale interface
+  flap. With `REMOTE_PC_MCP_HOST` set to a specific Tailscale IP, a brief loss
+  of that IP from the interface (WiFi roam, NAT renegotiation, idle reconnect
+  on laptops) orphans the bound socket. `accept()` then raises `OSError`,
+  which previously killed the listener while the process kept running.
+  Existing TCP connections survived, but no new clients could connect until
+  manual restart. Now the uvicorn `Server` runs inside a `while True:
+  try/except OSError` loop that logs the error, sleeps 2 seconds, and
+  re-binds. The process self-heals when the interface IP returns, with no
+  human in the loop.
+
 ## [0.2.2] — 2026-05-27
 
 ### Fixed
