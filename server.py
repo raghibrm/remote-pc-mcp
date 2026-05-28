@@ -44,13 +44,14 @@ import pyautogui
 import uvicorn
 from dotenv import load_dotenv
 from mcp.server.fastmcp import FastMCP
+from mcp.server.transport_security import TransportSecuritySettings
 from starlette.applications import Starlette
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
 from starlette.responses import JSONResponse
 from starlette.routing import Route
 
-__version__ = "0.2.0"
+__version__ = "0.2.1"
 
 pyautogui.FAILSAFE = False  # disable corner-hit abort; we're driving remotely
 load_dotenv()
@@ -137,8 +138,29 @@ _procs: dict[int, dict] = _load_procs()
 # are single JSON payloads (not SSE event streams), so a client that POSTs and
 # walks away cannot leave a zombie stream behind. This is the fix for the
 # class of bugs where a server restart bricks the client.
+#
+# DNS-rebinding protection in the SDK rejects any Host header not in its
+# allowlist, which breaks legitimate access via Tailscale IPs and LAN hostnames.
+# This server is already protected by a 256-bit bearer token (constant-time
+# compared); DNS rebinding is the wrong threat model on a tailnet/LAN. We
+# default the protection OFF and let operators opt in by setting
+# REMOTE_PC_MCP_ALLOWED_HOSTS to a comma-separated list when they want it.
 
-mcp = FastMCP("remote-pc-mcp", stateless_http=True, json_response=True)
+_ALLOWED_HOSTS = [
+    h.strip() for h in os.getenv("REMOTE_PC_MCP_ALLOWED_HOSTS", "").split(",") if h.strip()
+]
+_TRANSPORT_SECURITY = TransportSecuritySettings(
+    enable_dns_rebinding_protection=bool(_ALLOWED_HOSTS),
+    allowed_hosts=_ALLOWED_HOSTS,
+    allowed_origins=_ALLOWED_HOSTS,
+)
+
+mcp = FastMCP(
+    "remote-pc-mcp",
+    stateless_http=True,
+    json_response=True,
+    transport_security=_TRANSPORT_SECURITY,
+)
 
 
 # ── Tools ───────────────────────────────────────────────────────────────────

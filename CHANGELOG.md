@@ -4,6 +4,22 @@ All notable changes to this project will be documented here. The format is
 based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this
 project follows semver from 0.2.0 onward.
 
+## [0.2.1] — 2026-05-27
+
+### Fixed
+- DNS-rebinding protection in the MCP SDK was rejecting any Host header that
+  wasn't on its allowlist, which broke legitimate access via Tailscale IPs and
+  LAN hostnames (`Invalid Host header` / HTTP 400 from `/mcp`). The server is
+  already protected by a 256-bit bearer token compared in constant time, and
+  it lives on a tailnet or LAN — DNS rebinding isn't a meaningful threat in
+  that topology — so the protection is now OFF by default. Operators who want
+  it can set `REMOTE_PC_MCP_ALLOWED_HOSTS` to a comma-separated allowlist and
+  it will turn back on for the listed hosts.
+
+### Added
+- Regression test (`tests/test_host_header.py`) that posts to `/mcp` with a
+  non-localhost Host header.
+
 ## [0.2.0] — 2026-05-27
 
 ### Breaking
