@@ -38,7 +38,7 @@ The transport is `mcp` SDK's streamable HTTP (`stateless_http=True`), so a serve
 1. Clone this repo:
 
 ```bash
-git clone https://github.com/raghibmurt/remote-pc-mcp
+git clone https://github.com/raghibrm/remote-pc-mcp
 cd remote-pc-mcp
 ```
 
