@@ -4,6 +4,23 @@ All notable changes to this project will be documented here. The format is
 based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this
 project follows semver from 0.2.0 onward.
 
+## [0.2.2] — 2026-05-27
+
+### Fixed
+- `start.bat` / `start.sh` were not idempotent: launching one while another
+  was already running (e.g. Task Scheduler at login + a manual double-click)
+  killed the existing healthy server and spawned a duplicate, which then
+  dueled with the original inside the auto-restart loop. The scripts now
+  probe `/health` first and exit cleanly with "already running" when an
+  instance is up. After a crash inside the loop, they re-probe and yield to
+  any other instance that grabbed the port.
+
+### Changed
+- `start.bat` / `start.sh` honour `REMOTE_PC_MCP_PORT` instead of hardcoding
+  `8765`, matching what `server.py` already reads. This also lets the new
+  `tests/test_start_idempotency.py` exercise the scripts on a high port
+  without touching whatever production server is running.
+
 ## [0.2.1] — 2026-05-27
 
 ### Fixed
