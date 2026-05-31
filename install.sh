@@ -33,7 +33,11 @@ mkdir -p "$UNIT_DIR"
 cat > "$UNIT_FILE" <<EOF
 [Unit]
 Description=remote-pc-mcp supervisor
-After=network-online.target
+# Avoid being marked failed under brief failure storms (e.g. transient network
+# during the first 60s of boot). After 10 fast failures in 60s, systemd backs
+# off; daemon.py's own exponential backoff covers everything else.
+StartLimitIntervalSec=60
+StartLimitBurst=10
 
 [Service]
 Type=simple
@@ -42,6 +46,7 @@ EnvironmentFile=-$SCRIPT_DIR/.env
 ExecStart=$PY $SCRIPT_DIR/daemon.py
 Restart=on-failure
 RestartSec=5
+SyslogIdentifier=remote-pc-mcp
 
 [Install]
 WantedBy=default.target

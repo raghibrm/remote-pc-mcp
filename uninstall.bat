@@ -17,10 +17,8 @@ for /f "tokens=5" %%a in ('netstat -ano ^| findstr ":%REMOTE_PC_MCP_PORT% " ^| f
     taskkill /F /PID %%a >nul 2>&1
 )
 
-REM Also kill any orphaned daemon supervisor that lost its child.
-for /f "tokens=2 delims=," %%a in ('wmic process where "name='pythonw.exe' and commandline like '%%daemon.py%%'" get processid /format:csv 2^>nul ^| findstr /R "[0-9]"') do (
-    echo Stopping daemon supervisor ^(PID %%a^)...
-    taskkill /F /PID %%a >nul 2>&1
-)
+REM Also kill any orphaned daemon supervisor that lost its child. wmic is
+REM deprecated in Windows 11; this uses CIM via PowerShell instead.
+powershell -NoProfile -Command "Get-CimInstance Win32_Process -Filter \"Name='pythonw.exe'\" | Where-Object { $_.CommandLine -like '*daemon.py*' } | ForEach-Object { Write-Output ('Stopping daemon supervisor (PID ' + $_.ProcessId + ')...'); Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }"
 
 endlocal & exit /b 0

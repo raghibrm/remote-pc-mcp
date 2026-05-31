@@ -104,7 +104,7 @@ start.bat
 
 ```bash
 curl http://localhost:8765/health
-# {"status":"ok","server":"remote-pc-mcp","version":"0.3.0"}
+# {"status":"ok","server":"remote-pc-mcp","version":"0.3.1"}
 ```
 
 ## Adding to Claude Code

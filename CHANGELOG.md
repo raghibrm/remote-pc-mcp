@@ -4,6 +4,45 @@ All notable changes to this project will be documented here. The format is
 based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this
 project follows semver from 0.2.0 onward.
 
+## [0.3.1] — 2026-05-30
+
+### Fixed
+- **`shell_exec` no longer blocks the asyncio event loop.** The synchronous
+  `subprocess.Popen` body now runs in a worker thread via `asyncio.to_thread`,
+  so `/health` and other tool calls keep being served while a long shell
+  command is in flight. Previously a 60s shell command starved `/health` for
+  60s; the supervising daemon would interpret that as a dead server and kill
+  it mid-command.
+- **`start_process` no longer leaks temp files forever.** When the spawned
+  process is observed to be dead — either by the next `get_process_output`
+  call or by the startup reaper `_gc_dead_procs()` — its registry entry is
+  dropped and its `.out.txt` / `.err.txt` files in `%TEMP%` are removed.
+  Previously every background process that the user did not explicitly kill
+  left orphan files that nothing cleaned up.
+- **`_save_procs` writes atomically** (write to `.tmp`, then `os.replace`).
+  A power loss between the write and the replace now leaves the previous
+  registry intact instead of half-written JSON that `_load_procs` discards
+  on the next start.
+- **Rebind loop exponential backoff.** A permanent `OSError` on `accept()`
+  no longer spins at 2 seconds forever flooding the log; the schedule walks
+  2→5→10→30→60 seconds and resets after 5 minutes of uptime, matching
+  `daemon.py`.
+- **Replaced `datetime.utcnow()`** with `datetime.now(timezone.utc)`.
+  `utcnow()` is deprecated in Python 3.12 and scheduled for removal; with
+  the old code the server would have stopped starting after a Python
+  upgrade somewhere in the 3.14/3.15 window.
+- **Replaced `wmic`** in `uninstall.bat` with a PowerShell `Get-CimInstance`
+  query. `wmic` is deprecated in Windows 11 and is being phased out of
+  optional features; the new form survives that removal.
+- **`install.sh` systemd unit hardened:**
+  - Removed `After=network-online.target` (user units do not reliably trigger
+    that target; the server already self-heals network changes via the
+    rebind loop, so the dependency was wrong and caused boot delays).
+  - Added `StartLimitIntervalSec=60` / `StartLimitBurst=10` so a brief
+    failure storm during boot does not put the unit into a permanent
+    failed state.
+  - Added `SyslogIdentifier=remote-pc-mcp` for cleaner `journalctl` output.
+
 ## [0.3.0] — 2026-05-30
 
 ### Breaking

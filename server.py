@@ -19,6 +19,7 @@ if platform.system() == "Windows":
 
 from pathlib import Path
 
+import asyncio
 import base64
 import json
 import os
@@ -27,7 +28,7 @@ import subprocess
 import tempfile
 import threading
 import time
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional
 
 import _logging
@@ -47,7 +48,7 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse
 from starlette.routing import Route
 
-__version__ = "0.3.0"
+__version__ = "0.3.1"
 
 pyautogui.FAILSAFE = False  # disable corner-hit abort; we're driving remotely
 load_dotenv()
@@ -112,10 +113,47 @@ def _load_procs() -> dict[int, dict]:
 
 
 def _save_procs() -> None:
+    """Atomic write: serialize to <file>.tmp, then os.replace into place. A
+    power loss between the write and the replace leaves the previous registry
+    intact instead of half-written JSON that _load_procs would discard."""
     try:
-        _PROCS_FILE.write_text(json.dumps({str(k): v for k, v in _procs.items()}))
+        tmp = _PROCS_FILE.with_suffix(".tmp")
+        tmp.write_text(json.dumps({str(k): v for k, v in _procs.items()}))
+        tmp.replace(_PROCS_FILE)
     except Exception as e:
         logger.error("Failed to persist process registry: %s", _safe_error(e))
+
+
+def _gc_proc(pid: int) -> None:
+    """Drop a registry entry and delete its temp stdout/stderr files. Caller
+    must hold _procs_lock."""
+    info = _procs.pop(pid, None)
+    if not info:
+        return
+    for key in ("stdout_path", "stderr_path"):
+        path = info.get(key)
+        if path:
+            try:
+                Path(path).unlink(missing_ok=True)
+            except Exception:
+                pass
+
+
+def _gc_dead_procs() -> None:
+    """Drop registry entries whose PIDs are no longer running. Idempotent."""
+    with _procs_lock:
+        dead = []
+        for pid in list(_procs):
+            try:
+                p = psutil.Process(pid)
+                if not p.is_running() or p.status() == psutil.STATUS_ZOMBIE:
+                    dead.append(pid)
+            except psutil.NoSuchProcess:
+                dead.append(pid)
+        for pid in dead:
+            _gc_proc(pid)
+        if dead:
+            _save_procs()
 
 
 _procs: dict[int, dict] = _load_procs()
@@ -156,19 +194,7 @@ mcp = FastMCP(
 # ── Tools ───────────────────────────────────────────────────────────────────
 
 
-@mcp.tool()
-def shell_exec(
-    command: str,
-    timeout: int = 30,
-    working_dir: Optional[str] = None,
-) -> dict:
-    """Run a shell command synchronously. Returns stdout, stderr, exit_code.
-
-    timeout is capped at REMOTE_PC_MCP_MAX_SHELL_TIMEOUT (default 600s).
-    """
-    capped_timeout = min(max(1, timeout), _MAX_SHELL_TIMEOUT)
-    audit_cmd = command if len(command) <= 200 else command[:200] + "..."
-    logger.info("shell_exec timeout=%d cwd=%s cmd=%r", capped_timeout, working_dir, audit_cmd)
+def _shell_exec_sync(command: str, capped_timeout: int, working_dir: Optional[str]) -> dict:
     proc = subprocess.Popen(
         command,
         shell=True,
@@ -190,6 +216,24 @@ def shell_exec(
     except Exception as e:
         _kill_process_tree(proc.pid)
         return {"stdout": "", "stderr": _safe_error(e), "exit_code": -1, "timed_out": False}
+
+
+@mcp.tool()
+async def shell_exec(
+    command: str,
+    timeout: int = 30,
+    working_dir: Optional[str] = None,
+) -> dict:
+    """Run a shell command. Returns stdout, stderr, exit_code.
+
+    timeout is capped at REMOTE_PC_MCP_MAX_SHELL_TIMEOUT (default 600s). The
+    blocking subprocess runs in a thread so /health and other tool calls keep
+    being served while a long command is in flight.
+    """
+    capped_timeout = min(max(1, timeout), _MAX_SHELL_TIMEOUT)
+    audit_cmd = command if len(command) <= 200 else command[:200] + "..."
+    logger.info("shell_exec timeout=%d cwd=%s cmd=%r", capped_timeout, working_dir, audit_cmd)
+    return await asyncio.to_thread(_shell_exec_sync, command, capped_timeout, working_dir)
 
 
 def _kill_process_tree(pid: int) -> None:
@@ -358,7 +402,7 @@ def start_process(command: str, working_dir: Optional[str] = None) -> dict:
                 "command": command,
                 "stdout_path": out.name,
                 "stderr_path": err.name,
-                "started_at": datetime.utcnow().isoformat() + "Z",
+                "started_at": datetime.now(timezone.utc).isoformat(),
             }
             _save_procs()
         logger.info("start_process pid=%d cmd=%r", proc.pid, command[:200])
@@ -369,7 +413,12 @@ def start_process(command: str, working_dir: Optional[str] = None) -> dict:
 
 @mcp.tool()
 def get_process_output(pid: int, tail_lines: int = 100) -> dict:
-    """Get the latest stdout/stderr from a process started with start_process."""
+    """Get the latest stdout/stderr from a process started with start_process.
+
+    Reads output even after the process has exited (until the next call notices
+    it's dead and the temp files are reaped). After the reap, subsequent calls
+    return 'not tracked'.
+    """
     if pid not in _procs:
         return {"error": f"PID {pid} not tracked. Only processes started via start_process are tracked."}
     info = _procs[pid]
@@ -387,7 +436,7 @@ def get_process_output(pid: int, tail_lines: int = 100) -> dict:
     except psutil.NoSuchProcess:
         running = False
 
-    return {
+    result = {
         "pid": pid,
         "running": running,
         "command": info["command"],
@@ -395,6 +444,14 @@ def get_process_output(pid: int, tail_lines: int = 100) -> dict:
         "stdout": tail(info["stdout_path"], tail_lines),
         "stderr": tail(info["stderr_path"], tail_lines),
     }
+    # Reap on this call: once the caller has seen the final output of a dead
+    # process, drop the registry entry and the temp files so they don't leak
+    # for the lifetime of the server.
+    if not running:
+        with _procs_lock:
+            _gc_proc(pid)
+            _save_procs()
+    return result
 
 
 @mcp.tool()
@@ -410,13 +467,13 @@ def kill_process(pid: int) -> dict:
             p.kill()
             force = True
         with _procs_lock:
-            _procs.pop(pid, None)
+            _gc_proc(pid)
             _save_procs()
         logger.info("kill_process pid=%d force=%s", pid, force)
         return {"pid": pid, "killed": True, "force_killed": force}
     except psutil.NoSuchProcess:
         with _procs_lock:
-            _procs.pop(pid, None)
+            _gc_proc(pid)
             _save_procs()
         return {"error": f"No process with PID {pid}"}
     except Exception as e:
@@ -459,7 +516,7 @@ def take_screenshot(save_path: Optional[str] = None) -> dict:
     if save_path is None:
         save_path = str(
             Path(tempfile.gettempdir())
-            / f"screenshot_{datetime.utcnow().strftime('%Y%m%d_%H%M%S')}.png"
+            / f"screenshot_{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')}.png"
         )
 
     if IS_WINDOWS:
@@ -595,6 +652,13 @@ def _build_app() -> Starlette:
 if __name__ == "__main__":
     if not _TOKEN:
         sys.exit("ERROR: REMOTE_PC_MCP_TOKEN not set. Copy .env.example → .env and fill it in.")
+
+    # Reap registry entries whose PIDs died while we were down. Without this,
+    # background processes that the user never explicitly killed accumulate in
+    # the registry across server restarts and leak their temp stdout/stderr
+    # files in %TEMP%.
+    _gc_dead_procs()
+
     logger.info("remote-pc-mcp v%s starting on %s:%d", __version__, _HOST, _PORT)
 
     # log_config=None preserves our dictConfig setup; uvicorn's default would
@@ -605,12 +669,23 @@ if __name__ == "__main__":
     )
     # Wrap the uvicorn server so a transient OSError on accept() (e.g. when the
     # Tailscale interface briefly loses its bound IP during a network change)
-    # doesn't permanently kill the listener. We log, sleep, and re-bind.
+    # doesn't permanently kill the listener. Back off exponentially so a
+    # permanent OSError (interface gone for real) doesn't spin at 2s forever
+    # and flood the log; the schedule resets after a long-running success.
+    _REBIND_BACKOFF = (2, 5, 10, 30, 60)
+    _REBIND_LONG_RUN_SECONDS = 300
+    backoff_idx = 0
     while True:
+        started = time.monotonic()
         server = uvicorn.Server(config)
         try:
             server.run()
             break
         except OSError as e:
-            logger.error("Listener died (%s); rebinding in 2s", _safe_error(e))
-            time.sleep(2)
+            uptime = time.monotonic() - started
+            if uptime >= _REBIND_LONG_RUN_SECONDS:
+                backoff_idx = 0
+            delay = _REBIND_BACKOFF[min(backoff_idx, len(_REBIND_BACKOFF) - 1)]
+            logger.error("Listener died (%s); rebinding in %ds", _safe_error(e), delay)
+            time.sleep(delay)
+            backoff_idx += 1
