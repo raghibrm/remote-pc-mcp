@@ -1,26 +1,26 @@
 # remote-pc-mcp
 
-An MCP server that exposes a PC's capabilities — shell execution, filesystem, background processes, GPU stats, screenshots, UI control, and file transfer — to Claude Code or any MCP client over **streamable HTTP**.
+Expose any PC's capabilities — shell, filesystem, background processes, system stats, screenshots, UI control, and file transfer — to Claude Code or any MCP client over **streamable HTTP**.
 
-Use it to give Claude Code full control over a remote machine: a gaming PC with a GPU, a home server, or any box on your network. Once installed, Claude can run commands, manage files, launch training jobs, check GPU utilisation, take screenshots, and drive the desktop — all from your main workstation.
+Drop it on any machine you want to drive remotely: a home server, a desktop, a build/CI box, a media server, a workstation, a Raspberry Pi. From a separate machine, Claude can run commands on it, manage files, launch and monitor background jobs, take screenshots, and drive the desktop UI.
 
-The transport is the `mcp` SDK's streamable HTTP (`stateless_http=True`), so a server restart does not break already-connected clients. Each request is self-contained — there is no in-memory session that can go stale.
+The transport is the `mcp` SDK's streamable HTTP (`stateless_http=True`), so a server restart does not break already-connected clients. Each request is self-contained — there is no in-memory session to go stale.
 
-> ⚠️ **`shell_exec` runs arbitrary commands on the host as the user that started the server.** Treat the bearer token like a root password. See [Security](#security) before exposing the server.
+> ⚠️ **`shell_exec` runs arbitrary commands on the host as the user that started the server.** The bearer token is a root-equivalent credential. See [Security](#security) before exposing the server.
 
 ## Tools
 
 | Tool | Description |
 |------|-------------|
-| `shell_exec` | Run any shell command synchronously — returns stdout, stderr, exit code |
+| `shell_exec` | Run any shell command — returns stdout, stderr, exit code |
 | `read_file` | Read a file as text or base64 (binary fallback) |
 | `write_file` | Write text or binary content to a file |
 | `list_directory` | List files and directories, optionally recursive |
-| `system_info` | OS, CPU, RAM, and GPU stats (via `nvidia-smi`) |
+| `system_info` | OS, CPU, RAM, and GPU stats (NVIDIA GPUs via `nvidia-smi`; absent on non-GPU hosts) |
 | `start_process` | Start a long-running command in the background — returns a PID |
 | `get_process_output` | Poll stdout/stderr of a background process by PID |
 | `kill_process` | Terminate a process by PID |
-| `download_file` | Download a URL directly to this machine (models, datasets, etc.) |
+| `download_file` | Download a URL directly to this machine |
 | `take_screenshot` | Capture the primary display — returns base64-encoded PNG |
 | `click` | Click at screen coordinates `(x, y)` — left / right / middle, single or multi-click |
 | `move_mouse` | Move cursor to `(x, y)`, optionally animated |
@@ -33,7 +33,7 @@ The transport is the `mcp` SDK's streamable HTTP (`stateless_http=True`), so a s
 - Python 3.10+
 - Windows 10/11, or Linux with systemd (for autostart)
 
-## Quick start
+## Install
 
 On the machine you want to control:
 
@@ -43,7 +43,7 @@ cd remote-pc-mcp
 cp .env.example .env
 ```
 
-Edit `.env` and set a strong token:
+Set a strong token in `.env`:
 
 ```
 REMOTE_PC_MCP_TOKEN=your-long-random-token-here
@@ -59,24 +59,43 @@ python -c "import secrets; print(secrets.token_hex(32))"
 openssl rand -hex 32
 ```
 
-Then either install as an autostart service (recommended), or run in the foreground.
-
-### Install for autostart
-
-Installs Python dependencies and registers the server to launch hidden at every login, restart automatically on crash (exponential backoff 5→60s, resets after 5 min of uptime), and survive reboots.
+Then run the installer — **this is what sets the server up for normal use:**
 
 ```bash
-# Windows  — drops a Startup-folder shortcut to `pythonw daemon.py`
+# Windows
 install.bat
 
-# Linux  — drops a systemd user unit (~/.config/systemd/user/remote-pc-mcp.service)
+# Linux
 chmod +x install.sh uninstall.sh start.sh
 ./install.sh
 ```
 
-Both installers are **idempotent and self-healing** — rerun any time to refresh after moving the repo.
+That's it. The installer:
 
-To remove:
+- installs Python dependencies
+- registers the server to launch hidden on every login (Startup-folder shortcut on Windows, systemd user unit on Linux)
+- starts it now
+- supervises it with exponential backoff on crash (5→10→20→40→60 seconds, resets after 5 minutes of uptime)
+- survives reboots — set once, runs forever
+
+### Verify it's up
+
+```bash
+curl http://localhost:8765/health
+# {"status":"ok","server":"remote-pc-mcp","version":"0.3.1"}
+```
+
+### When to rerun the installer
+
+`install.bat` / `install.sh` are idempotent and self-healing. Rerun any time after:
+
+- You **move the repo** to a different folder
+- You **reinstall or upgrade Python** to a different path
+- You **rebuild the machine** and want to restore autostart
+
+For day-to-day operation you never need to think about it.
+
+### Uninstall
 
 ```bash
 # Windows
@@ -86,9 +105,11 @@ uninstall.bat
 ./uninstall.sh
 ```
 
-### Foreground run (development)
+Removes the autostart entry and stops the running server + supervisor.
 
-For a one-off run with visible output and no autostart side effects:
+### Foreground dev run
+
+If you want to see the server's output in a console without touching autostart — for debugging or a one-off test:
 
 ```bash
 # Windows
@@ -98,23 +119,16 @@ start.bat
 ./start.sh
 ```
 
-`start.bat` / `start.sh` do not install anything; they spawn `python server.py` directly and exit when it does. No restart loop — use the autostart install for that.
-
-### Verify it's up
-
-```bash
-curl http://localhost:8765/health
-# {"status":"ok","server":"remote-pc-mcp","version":"0.3.1"}
-```
+`start.bat` / `start.sh` are **not** how you set the server up. They only run it in the foreground for a single session and have no restart loop. Use `install.bat` / `install.sh` for normal use.
 
 ## Adding to Claude Code
 
-In your Claude Code project's `.mcp.json`:
+In your MCP client config (`.mcp.json` for Claude Code):
 
 ```json
 {
   "mcpServers": {
-    "gaming-pc": {
+    "remote-pc": {
       "type": "http",
       "url": "http://YOUR_PC_IP_OR_HOSTNAME:8765/mcp",
       "headers": {
@@ -128,19 +142,19 @@ In your Claude Code project's `.mcp.json`:
 For Tailscale users, the magic-DNS hostname works:
 
 ```json
-"url": "http://gaming-pc.tail12345.ts.net:8765/mcp"
+"url": "http://your-pc.tail12345.ts.net:8765/mcp"
 ```
 
-Restart Claude Code. The tools will appear automatically.
+Restart Claude Code. The tools will appear automatically. The `"remote-pc"` key is just a label for Claude Code's UI — pick whatever name you want.
 
 ## Security
 
 `shell_exec` runs **any command** on the host as the user that started the server. That is intentional — it is what makes the server useful for remote-driving a PC. It also means:
 
 - **The bearer token is a root-equivalent credential.** Generate a 32-byte hex token, store it only in `.env` (which is git-ignored), and treat it like a password.
-- **Never expose the server to the public internet** without TLS terminations and a reverse proxy (nginx, Caddy, Cloudflare Tunnel).
+- **Never expose the server to the public internet** without TLS and a reverse proxy (nginx, Caddy, Cloudflare Tunnel).
 - **Use Tailscale** (strongly recommended): bind to your Tailscale IP (set `REMOTE_PC_MCP_HOST=100.x.x.x` in `.env`) so the listener is only reachable from devices in your tailnet.
-- **LAN-only deployments** with `REMOTE_PC_MCP_HOST=0.0.0.0` are reasonable if you trust every device on the LAN and have a strong token. Don't do this on a coffee-shop network.
+- **LAN-only deployments** with `REMOTE_PC_MCP_HOST=0.0.0.0` are reasonable if you trust every device on the LAN and have a strong token. Don't do this on an untrusted network.
 
 The token is compared with `secrets.compare_digest` (constant-time). All error messages pass through a sanitiser that strips absolute paths, the home directory, and the token before being returned to clients.
 
@@ -159,6 +173,16 @@ All env vars are optional except `REMOTE_PC_MCP_TOKEN`.
 | `REMOTE_PC_MCP_MAX_WRITE_BYTES` | 50 MB | `write_file` upper limit |
 | `REMOTE_PC_MCP_MAX_DOWNLOAD_BYTES` | 2 GB | `download_file` upper limit |
 
+After changing `.env`, restart the server so the new value takes effect:
+
+```bash
+# Windows: easiest path is just re-run the installer (idempotent)
+uninstall.bat && install.bat
+
+# Linux
+systemctl --user restart remote-pc-mcp
+```
+
 ## Logs and troubleshooting
 
 Two log files in the repo root, both rotated automatically:
@@ -171,7 +195,7 @@ Two log files in the repo root, both rotated automatically:
 **Server isn't responding?**
 
 ```bash
-# Is the listener up?
+# Is the listener up locally?
 curl http://localhost:8765/health
 
 # What's the supervisor seeing?
@@ -184,14 +208,18 @@ journalctl --user -u remote-pc-mcp -f
 explorer shell:startup    # look for remote-pc-mcp.lnk
 ```
 
+**MCP client says tools are missing after a server restart?**
+
+The streamable HTTP transport is designed so a restart does not brick clients, but the client still has to issue a request to notice the new server. In Claude Code: invoke any tool (or use `/mcp` to reconnect). If that fails, restart Claude Code on the client side.
+
 **Stuck process / port already in use?**
 
 ```bash
 # Windows
-uninstall.bat   # stops everything (also removes autostart — re-run install.bat after)
+uninstall.bat && install.bat
 
 # Linux
-./uninstall.sh
+./uninstall.sh && ./install.sh
 ```
 
 ## UI-driving tools
@@ -210,9 +238,9 @@ Project layout:
 | `server.py` | The MCP server — tools, auth, transport |
 | `daemon.py` | Supervisor — spawns server, restarts on crash with backoff |
 | `_logging.py` | Shared logging config — one handler for app + uvicorn loggers |
-| `start.{bat,sh}` | Foreground dev run |
-| `install.{bat,sh}` | Idempotent autostart installer |
+| `install.{bat,sh}` | Idempotent autostart installer (the normal entry point) |
 | `uninstall.{bat,sh}` | Removes autostart + stops the server |
+| `start.{bat,sh}` | Foreground dev run only (not used in normal operation) |
 
 ### Tests
 

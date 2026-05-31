@@ -1,6 +1,6 @@
 """
 DNS-rebinding protection in the MCP SDK rejects any Host header not on its
-allowlist. v0.2.0 hit this in production: main PC reached gaming-pc by its
+allowlist. v0.2.0 hit this in production: main PC reached remote-pc by its
 Tailscale IP and the streamable_http endpoint returned 400 "Invalid Host
 header". v0.2.1 turns the protection off by default so tailnet / LAN access
 works; this test pins that behaviour.
@@ -27,7 +27,7 @@ def test_mcp_accepts_non_localhost_host_header(server):
             **server.auth_headers(),
             "Accept": "application/json, text/event-stream",
             "Content-Type": "application/json",
-            "Host": "gaming-pc.example.ts.net:8765",
+            "Host": "remote-pc.example.ts.net:8765",
         },
         timeout=5.0,
     )
