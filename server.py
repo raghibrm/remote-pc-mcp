@@ -19,9 +19,14 @@ if platform.system() == "Windows":
 
 from pathlib import Path
 
-# When launched under pythonw.exe there is no console, so sys.stdout/stderr are
-# None; redirect early so any later import that prints does not crash.
-if sys.stdout is None or sys.stderr is None:
+# Under pythonw.exe there is no console. On older Pythons sys.stdout/stderr come
+# through as None; on 3.10+ they're TextIOWrapper objects bound to nothing useful.
+# Either way, redirect to server.log so Uvicorn's output is preserved.
+if (
+    sys.stdout is None
+    or sys.stderr is None
+    or sys.executable.lower().endswith("pythonw.exe")
+):
     _log = open(Path(__file__).with_name("server.log"), "a", encoding="utf-8", buffering=1)
     sys.stdout = _log
     sys.stderr = _log

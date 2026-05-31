@@ -3,6 +3,8 @@ setlocal
 
 if "%REMOTE_PC_MCP_PORT%"=="" set REMOTE_PC_MCP_PORT=8765
 
+call :install_autostart
+
 python -m pip install --quiet --disable-pip-version-check -r requirements.txt
 
 call :probe_health
@@ -22,7 +24,7 @@ if "%1"=="--selftest" (
 )
 
 :loop
-python server.py
+start /WAIT /B "" pythonw server.py
 set CODE=%errorlevel%
 if "%CODE%"=="0" goto end
 
@@ -43,3 +45,16 @@ endlocal & exit /b 0
 :probe_health
 python -c "import os,sys,urllib.request; p=os.environ.get('REMOTE_PC_MCP_PORT','8765'); urllib.request.urlopen('http://127.0.0.1:'+p+'/health', timeout=2).read(); sys.exit(0)" 2>nul
 exit /b %errorlevel%
+
+:install_autostart
+set "STARTUP_LNK=%APPDATA%\Microsoft\Windows\Start Menu\Programs\Startup\remote-pc-mcp.lnk"
+if exist "%STARTUP_LNK%" exit /b 0
+echo Registering autostart (hidden, runs at every sign-in)...
+set "INSTALL_DIR=%~dp0"
+powershell -NoProfile -ExecutionPolicy Bypass -Command "$d=$env:INSTALL_DIR.TrimEnd('\'); $sh=New-Object -ComObject WScript.Shell; $s=$sh.CreateShortcut($env:STARTUP_LNK); $s.TargetPath='wscript.exe'; $s.Arguments='\"' + $d + '\bg.vbs\"'; $s.WorkingDirectory=$d; $s.Save()" >nul 2>&1
+if exist "%STARTUP_LNK%" (
+    echo Autostart registered. Future logons will launch the server in the background.
+) else (
+    echo Warning: failed to register autostart. Server will still run now, but won't auto-start at logon.
+)
+exit /b 0
