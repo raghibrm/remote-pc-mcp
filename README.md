@@ -1,8 +1,8 @@
 # remote-pc-mcp
 
-Expose any PC's capabilities — shell, filesystem, background processes, system stats, screenshots, UI control, and file transfer — to Claude Code or any MCP client over **streamable HTTP**.
+Expose any PC's capabilities — shell, filesystem, background processes, system stats, screenshots, UI control, and file transfer — to **any MCP client** (Claude Desktop, Claude Code, Cursor, Cline, Continue, Windsurf, custom agents — anything that speaks the [Model Context Protocol](https://modelcontextprotocol.io)) over streamable HTTP.
 
-Drop it on any machine you want to drive remotely: a home server, a desktop, a build/CI box, a media server, a workstation, a Raspberry Pi. From a separate machine, Claude can run commands on it, manage files, launch and monitor background jobs, take screenshots, and drive the desktop UI.
+Drop it on any machine you want to drive remotely: a home server, a desktop, a build/CI box, a media server, a workstation, a Raspberry Pi. From a separate machine, your AI agent of choice can run commands on it, manage files, launch and monitor background jobs, take screenshots, and drive the desktop UI.
 
 The transport is the `mcp` SDK's streamable HTTP (`stateless_http=True`), so a server restart does not break already-connected clients. Each request is self-contained — there is no in-memory session to go stale.
 
@@ -82,7 +82,7 @@ That's it. The installer:
 
 ```bash
 curl http://localhost:8765/health
-# {"status":"ok","server":"remote-pc-mcp","version":"0.3.1"}
+# {"status":"ok","server":"remote-pc-mcp","version":"0.3.2"}
 ```
 
 ### When to rerun the installer
@@ -94,6 +94,28 @@ curl http://localhost:8765/health
 - You **rebuild the machine** and want to restore autostart
 
 For day-to-day operation you never need to think about it.
+
+### Fully hands-off reboot recovery (Windows)
+
+`install.bat` registers the server to start at **user logon**. If your machine reboots and sits at the lock screen with nobody logged in, the daemon never starts. For a remote/headless PC that's a problem.
+
+Fix: enable Windows auto-logon so the machine boots straight into your desktop session, which triggers the Startup-folder shortcut.
+
+```bash
+setup-auto-logon.bat
+```
+
+This downloads [Sysinternals Autologon](https://learn.microsoft.com/en-us/sysinternals/downloads/autologon) (Microsoft tool) and launches its GUI — type your Windows password once, click Enable. The password is stored **LSA-encrypted** by the OS, not in plain text or any file you can `cat`.
+
+After enabling, a cold reboot → desktop auto-logon → daemon starts → server reachable, all without anyone touching the keyboard.
+
+On Linux, the systemd user unit installed by `install.sh` already covers this if you enable lingering once:
+
+```bash
+sudo loginctl enable-linger $USER
+```
+
+That keeps user services running across reboots without requiring a logon.
 
 ### Uninstall
 
@@ -121,9 +143,9 @@ start.bat
 
 `start.bat` / `start.sh` are **not** how you set the server up. They only run it in the foreground for a single session and have no restart loop. Use `install.bat` / `install.sh` for normal use.
 
-## Adding to Claude Code
+## Adding to your MCP client
 
-In your MCP client config (`.mcp.json` for Claude Code):
+Most MCP clients use the same JSON schema; the file just lives in different places. Example:
 
 ```json
 {
@@ -139,13 +161,23 @@ In your MCP client config (`.mcp.json` for Claude Code):
 }
 ```
 
-For Tailscale users, the magic-DNS hostname works:
+Where to put it:
+
+| Client | Config file |
+|--------|-------------|
+| Claude Code | `.mcp.json` in the project root (or `~/.claude.json` for user-wide) |
+| Claude Desktop | `claude_desktop_config.json` (Settings → Developer → Edit Config) |
+| Cursor | `.cursor/mcp.json` |
+| Cline / Continue / Windsurf | each has its own MCP servers panel — paste the JSON there |
+| Custom agents | wherever your agent reads MCP server definitions |
+
+For Tailscale users, the magic-DNS hostname works in the URL:
 
 ```json
 "url": "http://your-pc.tail12345.ts.net:8765/mcp"
 ```
 
-Restart Claude Code. The tools will appear automatically. The `"remote-pc"` key is just a label for Claude Code's UI — pick whatever name you want.
+Restart (or reload) your client. The tools appear automatically. The `"remote-pc"` key is just a label — pick whatever name you want.
 
 ## Security
 
@@ -210,7 +242,7 @@ explorer shell:startup    # look for remote-pc-mcp.lnk
 
 **MCP client says tools are missing after a server restart?**
 
-The streamable HTTP transport is designed so a restart does not brick clients, but the client still has to issue a request to notice the new server. In Claude Code: invoke any tool (or use `/mcp` to reconnect). If that fails, restart Claude Code on the client side.
+The streamable HTTP transport is designed so a restart does not brick clients, but the client still has to issue a request to notice the new server. First fix: invoke any tool from this server (e.g. ask your agent to run `system_info`) — the client will retry the connection. If that fails, reconnect the MCP server in your client (Claude Code: `/mcp` ; Cursor: refresh in MCP panel) or restart the client.
 
 **Stuck process / port already in use?**
 
@@ -241,6 +273,7 @@ Project layout:
 | `install.{bat,sh}` | Idempotent autostart installer (the normal entry point) |
 | `uninstall.{bat,sh}` | Removes autostart + stops the server |
 | `start.{bat,sh}` | Foreground dev run only (not used in normal operation) |
+| `setup-auto-logon.bat` | Optional, Windows only — enables auto-logon for fully hands-off reboot recovery |
 
 ### Tests
 

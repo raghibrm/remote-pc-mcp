@@ -4,6 +4,28 @@ All notable changes to this project will be documented here. The format is
 based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this
 project follows semver from 0.2.0 onward.
 
+## [0.3.2] — 2026-05-30
+
+### Added
+- `setup-auto-logon.bat` (Windows) — downloads Microsoft Sysinternals
+  Autologon and runs its GUI for password entry, enabling auto-logon so
+  the machine boots straight into the user session that runs the
+  Startup-folder shortcut. Closes the "rebooted, sits at lock screen,
+  daemon never starts" reliability gap on headless/remote PCs without
+  resorting to Task Scheduler (which would run as SYSTEM and break
+  Session-0-incompatible UI tools like screenshots/clicks).
+- README "Fully hands-off reboot recovery (Windows)" section explaining
+  the auto-logon path and the Linux `loginctl enable-linger` equivalent.
+
+### Changed
+- **Neutralized AI-client framing.** The project is an MCP server — it
+  works with any client that speaks Model Context Protocol (Claude
+  Desktop, Claude Code, Cursor, Cline, Continue, Windsurf, custom
+  agents). README opening sentence, "Adding to your MCP client"
+  section, and troubleshooting tip now reflect that instead of
+  hard-coding "Claude Code". Added a "where the config file lives"
+  table covering the major clients.
+
 ## [0.3.1] — 2026-05-30
 
 ### Fixed

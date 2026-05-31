@@ -44,4 +44,8 @@ echo Installed. The server will start hidden at every sign-in.
 echo   - Logs:  server.log ^(app^) and daemon.log ^(supervisor^)
 echo   - Start now without rebooting:  pythonw daemon.py
 echo   - Remove autostart:             uninstall.bat
+echo.
+echo For fully hands-off reboot recovery ^(machine boots straight into your
+echo session so the daemon starts even if nobody touches the keyboard^), also
+echo run:  setup-auto-logon.bat
 endlocal & exit /b 0
