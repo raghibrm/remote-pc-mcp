@@ -4,6 +4,41 @@ All notable changes to this project will be documented here. The format is
 based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this
 project follows semver from 0.2.0 onward.
 
+## [0.3.0] — 2026-05-30
+
+### Breaking
+- **Launcher split into single-purpose scripts.** `start.bat` / `start.sh` are
+  now run-only — no autostart side effects, no restart loop. To install
+  autostart, run the new `install.bat` (Windows) or `install.sh` (Linux); to
+  remove, run `uninstall.bat` / `uninstall.sh`. Existing Startup-folder
+  shortcuts from earlier 0.2.x setups (pointing at `bg.vbs` → `start.bat`)
+  should be removed and replaced with `install.bat`.
+
+### Added
+- `daemon.py` — Python supervisor. Probes `/health` and exits cleanly if the
+  server is already up; otherwise spawns `server.py` and restarts on crash
+  with exponential backoff (5/10/20/40/60s, capped, resets after 5 minutes of
+  uptime). Logs to its own `daemon.log` so it never contends with `server.log`
+  for write locks.
+- `install.bat` / `install.sh` — idempotent installer. Windows drops a Startup
+  shortcut to `pythonw daemon.py` (natively windowless — no VBS wrapper).
+  Linux writes a systemd user unit at
+  `~/.config/systemd/user/remote-pc-mcp.service` and enables it. Rerunning
+  refreshes the install after moving the repo (self-healing for the stale
+  shortcut / unit problem).
+- `uninstall.bat` / `uninstall.sh` — clean removal of the autostart entry
+  plus stop of any running server/daemon.
+- `_logging.py` — one `dictConfig` wires `remote-pc-mcp`, `uvicorn`,
+  `uvicorn.error`, and `uvicorn.access` through a single `RotatingFileHandler`
+  on `server.log`. Replaces the brittle `sys.stdout = open(...)` redirect and
+  the `pythonw.exe` string-match in `server.py`.
+
+### Removed
+- `bg.vbs` — pythonw is natively windowless, so the VBS wrapper that hid the
+  cmd window is no longer needed.
+- The `if sys.stdout is None …` redirect block from `server.py`. Logging is
+  now configured up front via `_logging.configure()`.
+
 ## [0.2.3] — 2026-05-28
 
 ### Fixed
