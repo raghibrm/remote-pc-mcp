@@ -19,21 +19,8 @@ if platform.system() == "Windows":
 
 from pathlib import Path
 
-# Under pythonw.exe there is no console. On older Pythons sys.stdout/stderr come
-# through as None; on 3.10+ they're TextIOWrapper objects bound to nothing useful.
-# Either way, redirect to server.log so Uvicorn's output is preserved.
-if (
-    sys.stdout is None
-    or sys.stderr is None
-    or sys.executable.lower().endswith("pythonw.exe")
-):
-    _log = open(Path(__file__).with_name("server.log"), "a", encoding="utf-8", buffering=1)
-    sys.stdout = _log
-    sys.stderr = _log
-
 import base64
 import json
-import logging
 import os
 import secrets
 import subprocess
@@ -41,8 +28,11 @@ import tempfile
 import threading
 import time
 from datetime import datetime
-from logging.handlers import RotatingFileHandler
 from typing import Optional
+
+import _logging
+
+_logging.configure()
 
 import httpx
 import psutil
@@ -82,13 +72,7 @@ _PROCS_FILE = _STATE_DIR / "procs.json"
 
 # ── Logging ────────────────────────────────────────────────────────────────
 
-logger = logging.getLogger("remote-pc-mcp")
-logger.setLevel(logging.INFO)
-_handler = RotatingFileHandler(
-    _HERE / "server.log", maxBytes=10 * 1024 * 1024, backupCount=5, encoding="utf-8"
-)
-_handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(name)s %(message)s"))
-logger.addHandler(_handler)
+logger = _logging.get_logger()
 
 
 # ── Error sanitization ─────────────────────────────────────────────────────
@@ -612,12 +596,16 @@ if __name__ == "__main__":
     if not _TOKEN:
         sys.exit("ERROR: REMOTE_PC_MCP_TOKEN not set. Copy .env.example → .env and fill it in.")
     logger.info("remote-pc-mcp v%s starting on %s:%d", __version__, _HOST, _PORT)
-    print(f"remote-pc-mcp v{__version__} listening on {_HOST}:{_PORT}")
 
+    # log_config=None preserves our dictConfig setup; uvicorn's default would
+    # overwrite it and route its loggers back to stderr (which is hollow under
+    # pythonw on Python 3.10+).
+    config = uvicorn.Config(
+        _build_app(), host=_HOST, port=_PORT, log_config=None
+    )
     # Wrap the uvicorn server so a transient OSError on accept() (e.g. when the
     # Tailscale interface briefly loses its bound IP during a network change)
     # doesn't permanently kill the listener. We log, sleep, and re-bind.
-    config = uvicorn.Config(_build_app(), host=_HOST, port=_PORT, log_level="info")
     while True:
         server = uvicorn.Server(config)
         try:
