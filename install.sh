@@ -20,7 +20,7 @@ while [ $# -gt 0 ]; do
         --uninstall) mode="uninstall"; shift ;;
         --linger)    linger=1; shift ;;
         --help|-h)
-            sed -n '2,8p' "$0" | sed 's/^# //;s/^#//'
+            sed -n '2,9p' "$0" | sed 's/^# //;s/^#//'
             exit 0
             ;;
         *) echo "Unknown argument: $1" >&2; exit 2 ;;
@@ -74,11 +74,32 @@ EOF
 
     if [ "$linger" -eq 1 ]; then
         echo "Enabling user lingering (server runs even when nobody is logged in)..."
-        sudo loginctl enable-linger "$USER"
+        if ! sudo loginctl enable-linger "$USER"; then
+            echo "WARNING: loginctl enable-linger failed. The unit is installed but linger is not enabled."
+            echo "Re-run \`sudo loginctl enable-linger \$USER\` once you have sudo to finish."
+        fi
     fi
 
+    local port="${REMOTE_PC_MCP_PORT:-8765}"
+    echo "Waiting for /health to respond on port $port..."
+    local up=0
+    for i in $(seq 1 25); do
+        if curl -fsS --max-time 1 "http://127.0.0.1:$port/health" >/dev/null 2>&1; then
+            up=1
+            break
+        fi
+        sleep 0.6
+    done
+    if [ "$up" -ne 1 ]; then
+        echo "ERROR: daemon did not respond on :$port within ~15s." >&2
+        echo "Most likely cause: .env missing or REMOTE_PC_MCP_TOKEN not set." >&2
+        echo "Check: systemctl --user status remote-pc-mcp ; tail server.log daemon.log" >&2
+        exit 1
+    fi
+    echo "Daemon is up."
+
     echo
-    echo "Installed. The server will start at every login."
+    echo "Installed and running. Future logins will start it automatically."
     echo "  - Status:    systemctl --user status remote-pc-mcp"
     echo "  - Logs:      server.log (app), daemon.log (supervisor)"
     echo "               journalctl --user -u remote-pc-mcp -f"

@@ -21,6 +21,31 @@ project follows semver from 0.2.0 onward.
   Claude Code, Cursor, Cline, Continue, Windsurf, custom agents)
   rather than hard-coding Claude Code.
 
+## [0.4.1] — 2026-05-31
+
+### Fixed
+- **`install.bat` now actually starts the daemon** after registering the
+  Startup shortcut, and polls `/health` until it responds (exits non-zero
+  if it doesn't within ~15s). Previously it only registered the
+  future-logon shortcut — README claimed "starts it now" but the script
+  didn't, so users running `install.bat` on a fresh PC saw nothing
+  listening on :8765 until they signed out and back in. Same `/health`
+  probe added to `install.sh`.
+- **`install.bat` creates the Windows Firewall inbound rule** for TCP
+  `REMOTE_PC_MCP_PORT` automatically (warns if not Administrator and
+  prints the exact command to run as admin). Previously the rule had to
+  be created by hand per the onboarding docs; forgetting it meant the
+  server was unreachable from other devices even when running locally.
+- **`install.bat` verifies `daemon.py` exists** before touching anything,
+  so a partial / corrupted checkout fails loudly instead of writing a
+  shortcut to a non-existent file.
+- **`install.bat --uninstal` (typo) now exits 2**, not 0 — caller scripts
+  that check `%errorlevel%` no longer see false success on misspellings.
+- **`install.sh --help`** now includes the `--help` line itself (sed
+  range was `'2,8p'`, should have been `'2,9p'`).
+- **`install.sh --linger`** no longer aborts the whole script when sudo
+  fails; prints a recoverable warning so the unit install is preserved.
+
 ## [0.4.0] — 2026-05-31
 
 ### Breaking
