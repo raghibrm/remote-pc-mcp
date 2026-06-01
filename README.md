@@ -59,18 +59,18 @@ python -c "import secrets; print(secrets.token_hex(32))"
 openssl rand -hex 32
 ```
 
-Then run the installer — **this is what sets the server up for normal use:**
+Then run the installer:
 
 ```bash
 # Windows
 install.bat
 
 # Linux
-chmod +x install.sh uninstall.sh start.sh
+chmod +x install.sh
 ./install.sh
 ```
 
-That's it. The installer:
+That's it — one command. The installer:
 
 - installs Python dependencies
 - registers the server to launch hidden on every login (Startup-folder shortcut on Windows, systemd user unit on Linux)
@@ -82,7 +82,7 @@ That's it. The installer:
 
 ```bash
 curl http://localhost:8765/health
-# {"status":"ok","server":"remote-pc-mcp","version":"0.3.2"}
+# {"status":"ok","server":"remote-pc-mcp","version":"0.4.0"}
 ```
 
 ### When to rerun the installer
@@ -95,53 +95,35 @@ curl http://localhost:8765/health
 
 For day-to-day operation you never need to think about it.
 
-### Fully hands-off reboot recovery (Windows)
+### After a reboot
 
-`install.bat` registers the server to start at **user logon**. If your machine reboots and sits at the lock screen with nobody logged in, the daemon never starts. For a remote/headless PC that's a problem.
+Autostart fires when you **sign in** to Windows. A reboot that sits at the lock screen will NOT start the daemon until somebody logs in. This is intentional — enabling Windows auto-logon to make reboots fully hands-off would let anyone with physical access to the machine get a logged-in desktop, which is the wrong trade-off for a remote-control tool.
 
-Fix: enable Windows auto-logon so the machine boots straight into your desktop session, which triggers the Startup-folder shortcut.
+If you need to bring the daemon back up after a reboot without walking to the PC, sign in remotely via Remote Desktop or Tailscale SSH. Once you're logged in, the Startup shortcut fires and the daemon starts.
 
-```bash
-setup-auto-logon.bat
-```
-
-This downloads [Sysinternals Autologon](https://learn.microsoft.com/en-us/sysinternals/downloads/autologon) (Microsoft tool) and launches its GUI — type your Windows password once, click Enable. The password is stored **LSA-encrypted** by the OS, not in plain text or any file you can `cat`.
-
-After enabling, a cold reboot → desktop auto-logon → daemon starts → server reachable, all without anyone touching the keyboard.
-
-On Linux, the systemd user unit installed by `install.sh` already covers this if you enable lingering once:
-
-```bash
-sudo loginctl enable-linger $USER
-```
-
-That keeps user services running across reboots without requiring a logon.
+Linux is different: `install.sh --linger` runs `sudo loginctl enable-linger $USER` so the systemd user unit runs across reboots without any logon. systemd's user services don't share the auto-logon security problem because they don't grant interactive desktop access — they just keep your user-scoped daemons alive.
 
 ### Uninstall
 
 ```bash
 # Windows
-uninstall.bat
+install.bat --uninstall
 
 # Linux
-./uninstall.sh
+./install.sh --uninstall
 ```
 
 Removes the autostart entry and stops the running server + supervisor.
 
-### Foreground dev run
+### Foreground run (development)
 
-If you want to see the server's output in a console without touching autostart — for debugging or a one-off test:
+For a one-off run with visible console output and no autostart:
 
 ```bash
-# Windows
-start.bat
-
-# Linux
-./start.sh
+python server.py
 ```
 
-`start.bat` / `start.sh` are **not** how you set the server up. They only run it in the foreground for a single session and have no restart loop. Use `install.bat` / `install.sh` for normal use.
+That's it — no special script. Use `install.bat` / `install.sh` for the normal supervised setup.
 
 ## Adding to your MCP client
 
@@ -209,7 +191,7 @@ After changing `.env`, restart the server so the new value takes effect:
 
 ```bash
 # Windows: easiest path is just re-run the installer (idempotent)
-uninstall.bat && install.bat
+install.bat --uninstall && install.bat
 
 # Linux
 systemctl --user restart remote-pc-mcp
@@ -248,10 +230,10 @@ The streamable HTTP transport is designed so a restart does not brick clients, b
 
 ```bash
 # Windows
-uninstall.bat && install.bat
+install.bat --uninstall && install.bat
 
 # Linux
-./uninstall.sh && ./install.sh
+./install.sh --uninstall && ./install.sh
 ```
 
 ## UI-driving tools
@@ -270,10 +252,7 @@ Project layout:
 | `server.py` | The MCP server — tools, auth, transport |
 | `daemon.py` | Supervisor — spawns server, restarts on crash with backoff |
 | `_logging.py` | Shared logging config — one handler for app + uvicorn loggers |
-| `install.{bat,sh}` | Idempotent autostart installer (the normal entry point) |
-| `uninstall.{bat,sh}` | Removes autostart + stops the server |
-| `start.{bat,sh}` | Foreground dev run only (not used in normal operation) |
-| `setup-auto-logon.bat` | Optional, Windows only — enables auto-logon for fully hands-off reboot recovery |
+| `install.{bat,sh}` | Single entry point: default installs, `--uninstall` removes |
 
 ### Tests
 

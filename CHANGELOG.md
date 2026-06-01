@@ -4,27 +4,60 @@ All notable changes to this project will be documented here. The format is
 based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this
 project follows semver from 0.2.0 onward.
 
-## [0.3.2] — 2026-05-30
+## [0.3.2] — 2026-05-30 (superseded by 0.4.0)
 
-### Added
-- `setup-auto-logon.bat` (Windows) — downloads Microsoft Sysinternals
-  Autologon and runs its GUI for password entry, enabling auto-logon so
-  the machine boots straight into the user session that runs the
-  Startup-folder shortcut. Closes the "rebooted, sits at lock screen,
-  daemon never starts" reliability gap on headless/remote PCs without
-  resorting to Task Scheduler (which would run as SYSTEM and break
-  Session-0-incompatible UI tools like screenshots/clicks).
-- README "Fully hands-off reboot recovery (Windows)" section explaining
-  the auto-logon path and the Linux `loginctl enable-linger` equivalent.
+### Added (later removed in 0.4.0)
+- `setup-auto-logon.bat` — downloaded Microsoft Sysinternals Autologon
+  and ran its GUI to enable Windows auto-logon, so a rebooted machine
+  would boot to the desktop and trigger the Startup-folder shortcut
+  without anyone touching the keyboard. **Removed in 0.4.0** because
+  the security cost (anyone with physical access gets a logged-in
+  desktop, every boot) is not the right default for a remote-control
+  tool, even as opt-in.
 
 ### Changed
-- **Neutralized AI-client framing.** The project is an MCP server — it
-  works with any client that speaks Model Context Protocol (Claude
-  Desktop, Claude Code, Cursor, Cline, Continue, Windsurf, custom
-  agents). README opening sentence, "Adding to your MCP client"
-  section, and troubleshooting tip now reflect that instead of
-  hard-coding "Claude Code". Added a "where the config file lives"
-  table covering the major clients.
+- Neutralized AI-client framing: README and tests describe the project
+  as an MCP server usable by any compliant client (Claude Desktop,
+  Claude Code, Cursor, Cline, Continue, Windsurf, custom agents)
+  rather than hard-coding Claude Code.
+
+## [0.4.0] — 2026-05-31
+
+### Breaking
+- **Collapsed five Windows .bat files into one.** `start.bat`,
+  `uninstall.bat`, and `setup-auto-logon.bat` are gone. `install.bat`
+  is now the single entry point and takes flags:
+  - `install.bat` — default install (deps + autostart)
+  - `install.bat --uninstall` — remove autostart, stop running server
+  - `install.bat --help` — show usage
+- **Same on Linux.** `start.sh` and `uninstall.sh` are gone.
+  `install.sh` takes `--uninstall` and `--linger` (the latter runs
+  `sudo loginctl enable-linger $USER` so the user unit runs across
+  reboots without any login).
+- **Foreground / dev run is now just `python server.py`.** No more
+  `start.bat` wrapper. If you wanted the visible-console behavior,
+  invoke Python directly.
+- **Auto-logon support removed entirely.** Auto-logon traded the
+  Windows lock screen for unattended-reboot convenience, but it lets
+  anyone with physical access get a logged-in desktop. That is the
+  wrong trade-off for a remote-control tool, even as an opt-in. If
+  you want reboot recovery without walking to the PC, sign in via
+  Remote Desktop or Tailscale SSH.
+- Test `tests/test_start_idempotency.py` removed — it pinned
+  behaviour of the deleted `start.bat` / `start.sh`. The equivalent
+  probe-and-yield logic now lives in `daemon.py` and is exercised by
+  the rest of the suite.
+
+### Changed
+- README rewritten around the single-entry-point flow. Replaced the
+  "Foreground dev run" subsection with a one-liner pointing to
+  `python server.py`. "After a reboot" section now explains the
+  honest trade-off (lock screen stays; sign in remotely if needed)
+  instead of recommending auto-logon.
+
+### Removed
+- `start.bat`, `start.sh`, `uninstall.bat`, `uninstall.sh`,
+  `setup-auto-logon.bat`.
 
 ## [0.3.1] — 2026-05-30
 

@@ -1,41 +1,58 @@
 #!/usr/bin/env bash
-# Install dependencies and register a systemd user unit so daemon.py runs at
-# every login and is restarted on failure. Idempotent: rerun any time to
-# refresh the unit after moving the repo. To remove, run uninstall.sh.
+# Single entry point for setup on Linux.
+#
+# Usage:
+#   ./install.sh              Install deps and register a systemd user unit (default)
+#   ./install.sh --linger     Same, plus `sudo loginctl enable-linger $USER` so
+#                             the unit runs even before any user logs in
+#   ./install.sh --uninstall  Disable & remove the unit, stop the running server
+#   ./install.sh --help       Show this help
 set -euo pipefail
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 UNIT_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user"
 UNIT_FILE="$UNIT_DIR/remote-pc-mcp.service"
 
-PY="$(command -v python3 || command -v python || true)"
-if [ -z "$PY" ]; then
-    echo "ERROR: neither python3 nor python is on PATH. Install Python 3.10+." >&2
-    exit 1
-fi
+mode="install"
+linger=0
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --uninstall) mode="uninstall"; shift ;;
+        --linger)    linger=1; shift ;;
+        --help|-h)
+            sed -n '2,8p' "$0" | sed 's/^# //;s/^#//'
+            exit 0
+            ;;
+        *) echo "Unknown argument: $1" >&2; exit 2 ;;
+    esac
+done
 
-if ! command -v systemctl >/dev/null 2>&1; then
-    echo "ERROR: systemctl not found. This installer requires systemd." >&2
-    echo "On a non-systemd system, run \`$PY $SCRIPT_DIR/daemon.py\` from your" >&2
-    echo "init system of choice (cron @reboot, runit, openrc, etc.)." >&2
-    exit 1
-fi
+do_install() {
+    local PY
+    PY="$(command -v python3 || command -v python || true)"
+    if [ -z "$PY" ]; then
+        echo "ERROR: neither python3 nor python is on PATH. Install Python 3.10+." >&2
+        exit 1
+    fi
+    if ! command -v systemctl >/dev/null 2>&1; then
+        echo "ERROR: systemctl not found. This installer requires systemd." >&2
+        echo "On a non-systemd system, run \`$PY $SCRIPT_DIR/daemon.py\` from your" >&2
+        echo "init system of choice (cron @reboot, runit, openrc, etc.)." >&2
+        exit 1
+    fi
 
-echo "Installing/updating Python dependencies..."
-"$PY" -m pip install --quiet --disable-pip-version-check -r "$SCRIPT_DIR/requirements.txt"
+    echo "Installing/updating Python dependencies..."
+    "$PY" -m pip install --quiet --disable-pip-version-check -r "$SCRIPT_DIR/requirements.txt"
 
-if [ ! -f "$SCRIPT_DIR/.env" ] && [ -f "$SCRIPT_DIR/.env.example" ]; then
-    echo "WARNING: no .env file. Copy .env.example to .env and set REMOTE_PC_MCP_TOKEN before starting."
-fi
+    if [ ! -f "$SCRIPT_DIR/.env" ] && [ -f "$SCRIPT_DIR/.env.example" ]; then
+        echo "WARNING: no .env file. Copy .env.example to .env and set REMOTE_PC_MCP_TOKEN before starting."
+    fi
 
-echo "Writing systemd user unit at $UNIT_FILE..."
-mkdir -p "$UNIT_DIR"
-cat > "$UNIT_FILE" <<EOF
+    echo "Writing systemd user unit at $UNIT_FILE..."
+    mkdir -p "$UNIT_DIR"
+    cat > "$UNIT_FILE" <<EOF
 [Unit]
 Description=remote-pc-mcp supervisor
-# Avoid being marked failed under brief failure storms (e.g. transient network
-# during the first 60s of boot). After 10 fast failures in 60s, systemd backs
-# off; daemon.py's own exponential backoff covers everything else.
 StartLimitIntervalSec=60
 StartLimitBurst=10
 
@@ -52,16 +69,47 @@ SyslogIdentifier=remote-pc-mcp
 WantedBy=default.target
 EOF
 
-systemctl --user daemon-reload
-systemctl --user enable --now remote-pc-mcp.service
+    systemctl --user daemon-reload
+    systemctl --user enable --now remote-pc-mcp.service
 
-echo
-echo "Installed. The server will start at every login."
-echo "  - Status:   systemctl --user status remote-pc-mcp"
-echo "  - Logs:     server.log (app), daemon.log (supervisor)"
-echo "              journalctl --user -u remote-pc-mcp -f"
-echo "  - Restart:  systemctl --user restart remote-pc-mcp"
-echo "  - Remove:   ./uninstall.sh"
-echo
-echo "To keep the server running even when no user is logged in:"
-echo "  sudo loginctl enable-linger \$USER"
+    if [ "$linger" -eq 1 ]; then
+        echo "Enabling user lingering (server runs even when nobody is logged in)..."
+        sudo loginctl enable-linger "$USER"
+    fi
+
+    echo
+    echo "Installed. The server will start at every login."
+    echo "  - Status:    systemctl --user status remote-pc-mcp"
+    echo "  - Logs:      server.log (app), daemon.log (supervisor)"
+    echo "               journalctl --user -u remote-pc-mcp -f"
+    echo "  - Restart:   systemctl --user restart remote-pc-mcp"
+    echo "  - Remove:    ./install.sh --uninstall"
+    if [ "$linger" -ne 1 ]; then
+        echo
+        echo "For boot-time start (server runs even before any user logs in):"
+        echo "  ./install.sh --linger     (one-shot; runs \`sudo loginctl enable-linger \$USER\`)"
+    fi
+}
+
+do_uninstall() {
+    if command -v systemctl >/dev/null 2>&1; then
+        systemctl --user disable --now remote-pc-mcp.service 2>/dev/null || true
+    fi
+    if [ -f "$UNIT_FILE" ]; then
+        rm -f "$UNIT_FILE"
+        echo "Removed systemd user unit."
+    else
+        echo "systemd user unit was not installed."
+    fi
+    if command -v systemctl >/dev/null 2>&1; then
+        systemctl --user daemon-reload || true
+    fi
+    pkill -f "python.* daemon\.py" 2>/dev/null || true
+    pkill -f "python.* server\.py" 2>/dev/null || true
+    echo "Done."
+}
+
+case "$mode" in
+    install)   do_install ;;
+    uninstall) do_uninstall ;;
+esac
