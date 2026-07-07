@@ -1,0 +1,27 @@
+# CodeQL static analysis for remote-pc-mcp. This is a public repo that exposes a
+# machine's shell/filesystem over MCP, so a static security scan is worth having.
+# Runs on push, PR, and weekly (to catch newly-published query updates against
+# unchanged code). Findings appear under the repo's Security > Code scanning tab.
+name: CodeQL
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  schedule:
+    - cron: '27 4 * * 1'  # Mondays 04:27 UTC
+
+jobs:
+  analyze:
+    runs-on: ubuntu-latest
+    permissions:
+      security-events: write
+      actions: read
+      contents: read
+    steps:
+      - uses: actions/checkout@v5
+      - uses: github/codeql-action/init@v3
+        with:
+          languages: python
+      - uses: github/codeql-action/analyze@v3

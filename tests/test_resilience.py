@@ -4,7 +4,6 @@ client's life must NOT brick the client. Each request is self-contained, so a
 fresh call after restart should just work.
 """
 
-import time
 
 import httpx
 

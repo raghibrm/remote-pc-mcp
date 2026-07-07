@@ -1,5 +1,4 @@
 import sys
-from pathlib import Path
 
 
 async def test_shell_exec_runs(call_tool):
