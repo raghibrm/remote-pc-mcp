@@ -14,7 +14,14 @@ concurrency:
 
 jobs:
   python-tests:
-    runs-on: ubuntu-latest
+    # The suite boots the real server, which imports pyautogui — that needs a
+    # display and cannot import on a headless Linux runner, so the tests run on
+    # Windows (the platform this server targets). shell: bash because Windows
+    # runners default to PowerShell.
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: bash
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-python@v6
