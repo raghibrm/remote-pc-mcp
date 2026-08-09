@@ -13,3 +13,10 @@ build/
 .state/
 .pytest_cache/
 .claude/settings.local.json
+
+# Coverage output and scratch working files (regenerable, never committed)
+.coverage
+.coverage.*
+coverage.json
+htmlcov/
+.scratch/
