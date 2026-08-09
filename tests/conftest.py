@@ -30,10 +30,30 @@ def _free_port() -> int:
         return s.getsockname()[1]
 
 
-def _wait_for_health(url: str, timeout: float = 15.0) -> None:
+def _wait_for_health(url: str, timeout: float = 15.0, proc: "subprocess.Popen | None" = None) -> None:
+    """Poll until the server answers, and say which way it failed.
+
+    Takes the process so a startup crash reads as a crash. Without it the loop
+    polls a dead port for the whole timeout and then blames the clock, which is
+    what a CI failure here looked like: "never became healthy: timed out", long
+    after the server had already exited.
+
+    Deliberately does NOT capture the child's stderr. Both ways of doing that
+    change the behaviour of the thing being observed: subprocess.PIPE deadlocks
+    once the ~64KB buffer fills because nobody drains it (measured: 24 failures
+    over 10 minutes), and redirecting to a file makes this server's per-request
+    logging synchronous enough to stall connections (measured: 14 failures with
+    ConnectError, while the unmodified fixture passed 27/27 on the same machine
+    minutes earlier). An exit code with no message still beats a mystery.
+    """
     deadline = time.time() + timeout
     last_err: Exception | None = None
     while time.time() < deadline:
+        if proc is not None and proc.poll() is not None:
+            raise RuntimeError(
+                f"server exited with code {proc.returncode} before becoming healthy. "
+                f"Run `python server.py` by hand with the same env to see why."
+            )
         try:
             r = httpx.get(url, timeout=2.0)
             if r.status_code == 200 and r.json().get("status") == "ok":
@@ -41,7 +61,10 @@ def _wait_for_health(url: str, timeout: float = 15.0) -> None:
         except Exception as e:
             last_err = e
         time.sleep(0.2)
-    raise RuntimeError(f"server at {url} never became healthy: {last_err}")
+    raise RuntimeError(
+        f"server at {url} never became healthy within {timeout}s, "
+        f"process still running. Last probe error: {last_err}"
+    )
 
 
 class ServerHandle:
@@ -101,7 +124,12 @@ def server() -> ServerHandle:
     proc = _spawn_server(port, token)
     handle = ServerHandle(port, token, proc)
     try:
-        _wait_for_health(handle.health_url, timeout=30.0)
+        # 90s, not 30. Every test here is black-box HTTP against this one
+        # server, so a slow cold start on a loaded runner fails the whole suite:
+        # it reddened CI on a commit that only touched .gitignore, and the same
+        # commit passed on a retry. A crash now fails immediately via the proc
+        # check rather than waiting this out.
+        _wait_for_health(handle.health_url, timeout=90.0, proc=proc)
     except Exception:
         handle.stop()
         raise
