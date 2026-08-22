@@ -1,4 +1,6 @@
-mcp>=1.10.0
+# mcp 2.0.0 removed mcp.server.fastmcp, which server.py imports. Capped
+# until the server is ported to the 2.x MCPServer API.
+mcp>=1.10.0,<2
 uvicorn>=0.30.0
 starlette>=0.40.0
 python-dotenv>=1.0.0
