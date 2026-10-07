@@ -1,0 +1,40 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "io.github.raghibrm/remote-pc-mcp",
+  "description": "Drive a PC over MCP: shell, files, processes, system stats, screenshots, mouse and keyboard.",
+  "repository": {
+    "url": "https://github.com/raghibrm/remote-pc-mcp",
+    "source": "github"
+  },
+  "version": "0.5.0",
+  "packages": [
+    {
+      "registryType": "pypi",
+      "registryBaseUrl": "https://pypi.org",
+      "identifier": "remote-pc-mcp",
+      "version": "0.5.0",
+      "transport": {
+        "type": "streamable-http",
+        "url": "http://{REMOTE_PC_MCP_HOST}:{REMOTE_PC_MCP_PORT}/mcp"
+      },
+      "environmentVariables": [
+        {
+          "name": "REMOTE_PC_MCP_TOKEN",
+          "description": "Bearer token clients must present. Treat as a root-equivalent credential on the host.",
+          "isRequired": true,
+          "isSecret": true
+        },
+        {
+          "name": "REMOTE_PC_MCP_HOST",
+          "description": "Interface to bind (default 0.0.0.0).",
+          "isRequired": false
+        },
+        {
+          "name": "REMOTE_PC_MCP_PORT",
+          "description": "Port to listen on (default 8765).",
+          "isRequired": false
+        }
+      ]
+    }
+  ]
+}

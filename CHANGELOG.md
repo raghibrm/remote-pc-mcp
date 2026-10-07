@@ -21,6 +21,24 @@ project follows semver from 0.2.0 onward.
   Claude Code, Cursor, Cline, Continue, Windsurf, custom agents)
   rather than hard-coding Claude Code.
 
+## [0.5.0] — 2026-10-06
+
+### Added
+- Packaged for PyPI as `remote-pc-mcp`, with console entry points
+  `remote-pc-mcp` (server) and `remote-pc-mcp-daemon` (supervisor), and
+  `server.json` for the official MCP registry
+  (`io.github.raghibrm/remote-pc-mcp`).
+
+### Changed
+- Modules moved into a `remote_pc_mcp/` package. Root `server.py` and
+  `daemon.py` are now shims, so existing clones, Startup shortcuts, and
+  systemd units keep working across a pull.
+- `.env`, logs, and `.state/` resolve via `REMOTE_PC_MCP_HOME` (the shims pin
+  it to the repo root; default elsewhere is the working directory) instead of
+  the module's own directory.
+- The daemon spawns the server as `python -m remote_pc_mcp.server` instead of
+  by file path.
+
 ## [0.4.1] — 2026-05-31
 
 ### Fixed

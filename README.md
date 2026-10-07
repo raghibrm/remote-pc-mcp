@@ -82,7 +82,7 @@ That's it — one command. The installer:
 
 ```bash
 curl http://localhost:8765/health
-# {"status":"ok","server":"remote-pc-mcp","version":"0.4.0"}
+# {"status":"ok","server":"remote-pc-mcp","version":"0.5.0"}
 ```
 
 ### When to rerun the installer
@@ -124,6 +124,16 @@ python server.py
 ```
 
 That's it — no special script. Use `install.bat` / `install.sh` for the normal supervised setup.
+
+### Or install from PyPI
+
+```bash
+pip install remote-pc-mcp
+remote-pc-mcp          # run the server in the foreground
+remote-pc-mcp-daemon   # supervised: restarts the server on crash
+```
+
+A pip install gives you the server and supervisor commands but does not register autostart. For autostart on sign-in, use the clone and install-script path above. `.env`, logs, and `.state/` live in `REMOTE_PC_MCP_HOME` (default: the working directory).
 
 ## Adding to your MCP client
 
@@ -266,3 +276,5 @@ python -m pytest tests/ -v
 ## License
 
 MIT
+
+<!-- mcp-name: io.github.raghibrm/remote-pc-mcp -->
