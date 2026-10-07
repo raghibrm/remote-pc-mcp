@@ -1,0 +1,50 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "remote-pc-mcp"
+description = "Expose any PC's capabilities - shell, filesystem, background processes, system stats, screenshots, UI control, and file transfer - to any MCP client over streamable HTTP."
+readme = "README.md"
+license = { file = "LICENSE" }
+authors = [{ name = "Raghib Murt" }]
+requires-python = ">=3.10"
+dynamic = ["version"]
+keywords = ["mcp", "model-context-protocol", "remote-control", "automation", "tailscale"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: Microsoft :: Windows",
+    "Operating System :: POSIX :: Linux",
+    "Programming Language :: Python :: 3",
+    "Topic :: System :: Systems Administration",
+]
+# Keep in sync with requirements.txt (which the clone-based install scripts
+# use). The mcp<2 cap: mcp 2.0.0 removed mcp.server.fastmcp, which server.py
+# imports; capped until the server is ported to the 2.x MCPServer API.
+dependencies = [
+    "mcp>=1.10.0,<2",
+    "uvicorn>=0.30.0",
+    "starlette>=0.40.0",
+    "python-dotenv>=1.0.0",
+    "httpx>=0.27.0",
+    "psutil>=5.9.0",
+    "pyautogui>=0.9.54",
+    "pillow>=10.0.0",
+]
+
+[project.urls]
+Homepage = "https://github.com/raghibrm/remote-pc-mcp"
+Repository = "https://github.com/raghibrm/remote-pc-mcp"
+Changelog = "https://github.com/raghibrm/remote-pc-mcp/blob/main/CHANGELOG.md"
+
+[project.scripts]
+remote-pc-mcp = "remote_pc_mcp.server:main"
+remote-pc-mcp-daemon = "remote_pc_mcp.daemon:main"
+
+[tool.setuptools]
+packages = ["remote_pc_mcp"]
+
+[tool.setuptools.dynamic]
+version = { attr = "remote_pc_mcp.__version__" }

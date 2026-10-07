@@ -7,10 +7,10 @@ in the same process (logging.config.dictConfig replaces the prior config).
 
 import logging
 import logging.config
-from pathlib import Path
 
-_HERE = Path(__file__).parent
-LOG_FILE = _HERE / "server.log"
+from remote_pc_mcp import app_dir
+
+LOG_FILE = app_dir() / "server.log"
 
 LOG_CONFIG: dict = {
     "version": 1,
