@@ -4,6 +4,8 @@ Expose any PC's capabilities — shell, filesystem, background processes, system
 
 Drop it on any machine you want to drive remotely: a home server, a desktop, a build/CI box, a media server, a workstation, a Raspberry Pi. From a separate machine, your AI agent of choice can run commands on it, manage files, launch and monitor background jobs, take screenshots, and drive the desktop UI.
 
+![remote-pc-mcp demo: an agent calling system_info, running a background job polled by PID, and taking a screenshot on a remote machine](assets/demo.gif)
+
 The transport is the `mcp` SDK's streamable HTTP (`stateless_http=True`), so a server restart does not break already-connected clients. Each request is self-contained — there is no in-memory session to go stale.
 
 > ⚠️ **`shell_exec` runs arbitrary commands on the host as the user that started the server.** The bearer token is a root-equivalent credential. See [Security](#security) before exposing the server.
