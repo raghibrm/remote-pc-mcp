@@ -4,6 +4,17 @@ All notable changes to this project will be documented here. The format is
 based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this
 project follows semver from 0.2.0 onward.
 
+## [0.6.1] — 2026-10-18
+
+### Fixed
+- The daemon exited when it found a server already running, which left a
+  server started any other way (an older autostart that runs `server.py`
+  directly at logon, or a manual run) with nothing to restart it after a
+  crash. The daemon now watches that server's health every 30 seconds and,
+  after three missed checks in a row, starts its own and supervises it.
+- A lock file under `.state/` lets only one daemon run at a time, so a second
+  sign-in that fires the Startup shortcut again exits instead of competing.
+
 ## [0.6.0] — 2026-10-18
 
 ### Changed (breaking)
