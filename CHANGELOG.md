@@ -4,6 +4,22 @@ All notable changes to this project will be documented here. The format is
 based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this
 project follows semver from 0.2.0 onward.
 
+## [0.5.1] — 2026-10-18
+
+### Fixed
+- `take_screenshot` captured only the top-left part of the screen on a
+  Windows display scaled above 100%. A 3840x2160 display at 225% came back
+  as its top-left 1707x960. The capture now runs DPI-aware, so the image is
+  the whole desktop in physical pixels, the same space `click` uses.
+- README and the tool description said `take_screenshot` captures the
+  primary display. It captures the whole desktop, every monitor.
+
+### Added
+- `get_process_output` returns `exit_code` once a job ends. It is `None`
+  while the job runs, and for a job that outlived a server restart.
+- `skills/remote-pc/`, an agent skill that tells an agent when and how to use
+  this server.
+
 ## [0.3.2] — 2026-05-30 (superseded by 0.4.0)
 
 ### Added (later removed in 0.4.0)
