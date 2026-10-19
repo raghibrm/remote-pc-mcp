@@ -1,9 +1,12 @@
+import asyncio
 import base64
 import io
 import json
 import os
 import struct
+import subprocess
 import sys
+from pathlib import Path
 
 import pytest
 from PIL import Image
@@ -146,3 +149,43 @@ async def test_move_mouse_lands_where_the_screenshot_shows(call_tool):
             )
     finally:
         ctypes.windll.user32.SetCursorPos(*before)
+
+
+async def _until(predicate, timeout=5.0):
+    for _ in range(int(timeout / 0.1)):
+        if predicate():
+            return True
+        await asyncio.sleep(0.1)
+    return False
+
+
+@pytest.mark.skipif(not _INPUT_ALLOWED, reason="types into a window; set REMOTE_PC_MCP_TEST_INPUT=1")
+async def test_typing_and_hotkeys_reach_the_window_exactly(call_tool, tmp_path):
+    # pyautogui turned "Line 2" into "LINE @", dropped Shift from ")_+{}" and
+    # skipped every non-ASCII character. The test opens its own window and
+    # types only once that window has focus, so nothing lands anywhere else.
+    status, out = tmp_path / "status.txt", tmp_path / "out.txt"
+    target = subprocess.Popen(
+        [sys.executable, str(Path(__file__).with_name("_type_target.py")), str(status), str(out)]
+    )
+
+    def focused():
+        return status.exists() and status.read_text(encoding="utf-8") == "focused"
+
+    def holds(expected):
+        return lambda: out.exists() and out.read_text(encoding="utf-8") == expected
+
+    try:
+        if not await _until(focused, timeout=8):
+            pytest.skip("the test window never got focus, so nothing was typed")
+        text = "Line 2 ASCII: The quick brown fox 0123456789 !@#$%^&*()_+-=[]{};:'\",.<>/?\|`~\ncafé naïve — done"
+        assert (await call_tool("type_text", {"text": text}))["success"]
+        assert await _until(holds(text)), f"window holds {out.read_text(encoding='utf-8')!r}"
+
+        # One batch per combo: ctrl+a selects all, so the next text replaces it.
+        assert focused(), "focus moved away mid-test"
+        assert (await call_tool("press_key", {"key": "ctrl+a"}))["success"]
+        assert (await call_tool("type_text", {"text": "replaced"}))["success"]
+        assert await _until(holds("replaced")), f"window holds {out.read_text(encoding='utf-8')!r}"
+    finally:
+        target.kill()

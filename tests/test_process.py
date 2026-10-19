@@ -21,6 +21,37 @@ async def test_start_get_kill_process(call_tool):
     assert killed["killed"] is True
 
 
+async def test_kill_process_ends_the_whole_job(call_tool, tmp_path):
+    # The shell starts python, which starts a grandchild. Killing only the
+    # shell used to leave both running.
+    import psutil
+
+    child = tmp_path / "job.py"
+    child.write_text(
+        "import subprocess, sys, time\n"
+        "subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(120)'])\n"
+        "time.sleep(120)\n",
+        encoding="utf-8",
+    )
+    start = await call_tool("start_process", {"command": f'"{sys.executable}" "{child}"'})
+    pid = start["pid"]
+
+    descendants = []
+    for _ in range(50):  # up to 10 s for the tree to appear
+        descendants = psutil.Process(pid).children(recursive=True)
+        if sum(p.name().lower().startswith("python") for p in descendants) >= 2:
+            break
+        await asyncio.sleep(0.2)
+    pythons = [p for p in descendants if p.name().lower().startswith("python")]
+    assert len(pythons) >= 2, f"job tree never formed: {[p.name() for p in descendants]}"
+
+    killed = await call_tool("kill_process", {"pid": pid})
+    assert killed["killed"] is True and killed["processes"] >= 3
+
+    _, alive = psutil.wait_procs(descendants, timeout=5)
+    assert alive == [], f"processes left running after kill_process: {[p.pid for p in alive]}"
+
+
 async def _wait_until_finished(call_tool, pid: int, timeout: float = 15.0) -> dict:
     deadline = asyncio.get_running_loop().time() + timeout
     while True:

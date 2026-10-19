@@ -36,6 +36,7 @@ from pathlib import Path
 import asyncio
 import base64
 import ctypes
+import functools
 import io
 import json
 import os
@@ -48,7 +49,7 @@ from datetime import datetime, timezone
 from typing import Optional
 
 from remote_pc_mcp import __version__, app_dir
-from remote_pc_mcp import _logging, _screen
+from remote_pc_mcp import _keys, _logging, _screen
 
 _logging.configure()
 
@@ -225,6 +226,24 @@ mcp = FastMCP(
 
 
 # ── Tools ───────────────────────────────────────────────────────────────────
+#
+# FastMCP runs a plain `def` tool on the event loop itself, so one slow call (a
+# 1 s CPU sample, a 4K screenshot, a 5 s kill wait) froze every other request,
+# /health included: five concurrent system_info calls held /health for 7.4 s.
+# @_off_loop runs such a tool in a worker thread instead.
+
+
+def _off_loop(fn):
+    @functools.wraps(fn)
+    async def wrapper(*args, **kwargs):
+        return await asyncio.to_thread(fn, *args, **kwargs)
+
+    return wrapper
+
+
+# Off the event loop, two clients' input calls could now run at once and their
+# keystrokes interleave. Each mouse or keyboard call holds this for its duration.
+_ui_lock = threading.Lock()
 
 
 def _shell_exec_sync(command: str, capped_timeout: int, working_dir: Optional[str]) -> dict:
@@ -289,6 +308,7 @@ def _kill_process_tree(pid: int) -> None:
 
 
 @mcp.tool()
+@_off_loop
 def read_file(path: str, encoding: str = "utf-8") -> dict:
     """Read a file as text, with base64 fallback for binary files.
 
@@ -314,6 +334,7 @@ def read_file(path: str, encoding: str = "utf-8") -> dict:
 
 
 @mcp.tool()
+@_off_loop
 def write_file(
     path: str, content: str, encoding: str = "utf-8", base64_encoded: bool = False
 ) -> dict:
@@ -344,6 +365,7 @@ def write_file(
 
 
 @mcp.tool()
+@_off_loop
 def list_directory(path: str, recursive: bool = False) -> dict:
     """List files and subdirectories at a path."""
     try:
@@ -374,6 +396,7 @@ def list_directory(path: str, recursive: bool = False) -> dict:
 
 
 @mcp.tool()
+@_off_loop
 def system_info() -> dict:
     """Return OS, CPU, RAM, and GPU (via nvidia-smi) information."""
     vm = psutil.virtual_memory()
@@ -421,6 +444,7 @@ def system_info() -> dict:
 
 
 @mcp.tool()
+@_off_loop
 def start_process(command: str, working_dir: Optional[str] = None) -> dict:
     """Start a long-running command in the background. Returns PID to track it."""
     try:
@@ -446,6 +470,7 @@ def start_process(command: str, working_dir: Optional[str] = None) -> dict:
 
 
 @mcp.tool()
+@_off_loop
 def get_process_output(pid: int, tail_lines: int = 100) -> dict:
     """Get the latest stdout/stderr from a process started with start_process.
 
@@ -496,22 +521,39 @@ def get_process_output(pid: int, tail_lines: int = 100) -> dict:
 
 
 @mcp.tool()
+@_off_loop
 def kill_process(pid: int) -> dict:
-    """Terminate a running process by PID."""
+    """Terminate a process by PID.
+
+    For a job started with start_process this ends the whole job: the shell
+    and everything it launched. Killing only the shell left the real program
+    running (a 12-worker job kept every core busy after a "killed" reply). Any
+    other PID is ended alone, since its children (Explorer's, say) are not
+    part of anything this server started.
+    """
     try:
         p = psutil.Process(pid)
-        p.terminate()
-        force = False
-        try:
-            p.wait(timeout=5)
-        except psutil.TimeoutExpired:
-            p.kill()
-            force = True
+        procs = [p]
+        if pid in _procs:
+            procs = p.children(recursive=True)[::-1] + [p]
+        for q in procs:
+            try:
+                q.terminate()
+            except psutil.NoSuchProcess:
+                pass
+        _, alive = psutil.wait_procs(procs, timeout=5)
+        for q in alive:
+            try:
+                q.kill()
+            except psutil.NoSuchProcess:
+                pass
+        psutil.wait_procs(alive, timeout=5)
+        force = bool(alive)
         with _procs_lock:
             _gc_proc(pid)
             _save_procs()
-        logger.info("kill_process pid=%d force=%s", pid, force)
-        return {"pid": pid, "killed": True, "force_killed": force}
+        logger.info("kill_process pid=%d processes=%d force=%s", pid, len(procs), force)
+        return {"pid": pid, "killed": True, "processes": len(procs), "force_killed": force}
     except psutil.NoSuchProcess:
         with _procs_lock:
             _gc_proc(pid)
@@ -582,7 +624,8 @@ def _to_desktop(x: int, y: int) -> tuple[int, int]:
 
 
 @mcp.tool(structured_output=False)
-def take_screenshot(save_path: Optional[str] = None) -> list:
+@_off_loop
+def take_screenshot(save_path: Optional[str] = None, delay: float = 0.0) -> list:
     """Capture the whole desktop, every monitor, as an image sized for a vision model.
 
     The image is shrunk to at most REMOTE_PC_MCP_SCREEN_MAX_EDGE pixels on its
@@ -591,9 +634,15 @@ def take_screenshot(save_path: Optional[str] = None) -> list:
     and the server maps them to the real desktop. The full-resolution PNG stays
     on this machine at the returned path.
 
+    delay waits that many seconds first (at most 10). Apps can take a moment to
+    redraw after a click or a keystroke, and a screenshot taken straight away
+    can still show the old screen.
+
     Requires an interactive desktop session on Windows; pyautogui-driven tools
     cannot reach a Session 0 (service-context) desktop.
     """
+    if delay > 0:
+        time.sleep(min(delay, 10.0))
     if save_path is None:
         save_path = str(
             Path(tempfile.gettempdir())
@@ -663,11 +712,13 @@ def take_screenshot(save_path: Optional[str] = None) -> list:
 
 
 @mcp.tool()
+@_off_loop
 def click(x: int, y: int, button: str = "left", clicks: int = 1) -> dict:
     """Click at (x, y) in take_screenshot's image. button = 'left' | 'right' | 'middle'."""
     try:
         dx, dy = _to_desktop(x, y)
-        pyautogui.click(x=dx, y=dy, clicks=clicks, button=button)
+        with _ui_lock:
+            pyautogui.click(x=dx, y=dy, clicks=clicks, button=button)
         return {
             "success": True, "x": x, "y": y, "desktop_x": dx, "desktop_y": dy,
             "button": button, "clicks": clicks,
@@ -677,49 +728,75 @@ def click(x: int, y: int, button: str = "left", clicks: int = 1) -> dict:
 
 
 @mcp.tool()
+@_off_loop
 def move_mouse(x: int, y: int, duration: float = 0.0) -> dict:
     """Move the cursor to (x, y) in take_screenshot's image. duration > 0 animates the movement."""
     try:
         dx, dy = _to_desktop(x, y)
-        pyautogui.moveTo(x=dx, y=dy, duration=duration)
+        with _ui_lock:
+            pyautogui.moveTo(x=dx, y=dy, duration=duration)
         return {"success": True, "x": x, "y": y, "desktop_x": dx, "desktop_y": dy}
     except Exception as e:
         return {"error": _safe_error(e)}
 
 
 @mcp.tool()
+@_off_loop
 def type_text(text: str, interval: float = 0.0) -> dict:
-    """Type a string into the focused window. interval = seconds between keys."""
+    """Type a string into the focused window, exactly as given. interval = seconds between characters.
+
+    On Windows every character, including accents, dashes and emoji, is typed
+    as itself and the whole string goes in as one uninterruptible batch (see
+    _keys.py). Elsewhere pyautogui types it, and it skips non-ASCII characters.
+    """
     try:
-        pyautogui.typewrite(text, interval=interval)
+        with _ui_lock:
+            if not IS_WINDOWS:
+                pyautogui.typewrite(text, interval=interval)
+            elif interval > 0:
+                for ch in text:
+                    _keys.send(_keys.text_events(ch))
+                    time.sleep(interval)
+            elif text:
+                _keys.send(_keys.text_events(text))
         return {"success": True, "length": len(text)}
     except Exception as e:
         return {"error": _safe_error(e)}
 
 
 @mcp.tool()
+@_off_loop
 def press_key(key: str) -> dict:
-    """Press a single key or hotkey combo. Examples: 'enter', 'f11', 'ctrl+c', 'win+d'."""
+    """Press a single key or hotkey combo. Examples: 'enter', 'f11', 'ctrl+c', 'win+d'.
+
+    On Windows the whole combo goes in as one batch, so no other input can
+    land between ctrl going down and the key it modifies.
+    """
     try:
-        if "+" in key:
-            pyautogui.hotkey(*[k.strip() for k in key.split("+")])
-        else:
-            pyautogui.press(key)
+        with _ui_lock:
+            if IS_WINDOWS:
+                _keys.send(_keys.combo_events(key))
+            elif "+" in key:
+                pyautogui.hotkey(*[k.strip() for k in key.split("+")])
+            else:
+                pyautogui.press(key)
         return {"success": True, "key": key}
     except Exception as e:
         return {"error": _safe_error(e)}
 
 
 @mcp.tool()
+@_off_loop
 def scroll(amount: int, x: Optional[int] = None, y: Optional[int] = None) -> dict:
     """Scroll the mouse wheel. Positive = up, negative = down.
 
     Optional (x, y) in take_screenshot's image moves the cursor there first.
     """
     try:
-        if x is not None and y is not None:
-            pyautogui.moveTo(*_to_desktop(x, y))
-        pyautogui.scroll(amount)
+        with _ui_lock:
+            if x is not None and y is not None:
+                pyautogui.moveTo(*_to_desktop(x, y))
+            pyautogui.scroll(amount)
         return {"success": True, "amount": amount}
     except Exception as e:
         return {"error": _safe_error(e)}
