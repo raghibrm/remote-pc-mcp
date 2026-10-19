@@ -20,7 +20,7 @@ The transport is the `mcp` SDK's streamable HTTP (`stateless_http=True`), so a s
 | `list_directory` | List files and directories, optionally recursive |
 | `system_info` | OS, CPU, RAM, and GPU stats (NVIDIA GPUs via `nvidia-smi`; absent on non-GPU hosts) |
 | `start_process` | Start a long-running command in the background — returns a PID |
-| `get_process_output` | Poll stdout/stderr of a background process by PID |
+| `get_process_output` | Poll stdout/stderr of a background process by PID, plus its exit code once it ends |
 | `kill_process` | Terminate a process by PID |
 | `download_file` | Download a URL directly to this machine |
 | `take_screenshot` | Capture the whole desktop, every monitor — returns base64-encoded PNG |

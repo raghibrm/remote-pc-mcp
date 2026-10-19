@@ -130,6 +130,7 @@ def _save_procs() -> None:
 def _gc_proc(pid: int) -> None:
     """Drop a registry entry and delete its temp stdout/stderr files. Caller
     must hold _procs_lock."""
+    _popens.pop(pid, None)
     info = _procs.pop(pid, None)
     if not info:
         return
@@ -160,6 +161,11 @@ def _gc_dead_procs() -> None:
 
 
 _procs: dict[int, dict] = _load_procs()
+
+# Popen handles for jobs started by this server process, kept in memory only
+# so get_process_output can report an exit code. A job that outlives a server
+# restart is still tracked through _procs, but its exit code is unknown.
+_popens: dict[int, subprocess.Popen] = {}
 
 
 # ── MCP server (stateless streamable HTTP) ─────────────────────────────────
@@ -400,6 +406,7 @@ def start_process(command: str, working_dir: Optional[str] = None) -> dict:
         out.close()
         err.close()
         with _procs_lock:
+            _popens[proc.pid] = proc
             _procs[proc.pid] = {
                 "pid": proc.pid,
                 "command": command,
@@ -421,6 +428,9 @@ def get_process_output(pid: int, tail_lines: int = 100) -> dict:
     Reads output even after the process has exited (until the next call notices
     it's dead and the temp files are reaped). After the reap, subsequent calls
     return 'not tracked'.
+
+    exit_code is None while the job runs, and also when the server restarted
+    after starting the job, since the exit code is then unknowable.
     """
     if pid not in _procs:
         return {"error": f"PID {pid} not tracked. Only processes started via start_process are tracked."}
@@ -439,9 +449,13 @@ def get_process_output(pid: int, tail_lines: int = 100) -> dict:
     except psutil.NoSuchProcess:
         running = False
 
+    popen = _popens.get(pid)
+    exit_code = popen.poll() if popen is not None and not running else None
+
     result = {
         "pid": pid,
         "running": running,
+        "exit_code": exit_code,
         "command": info["command"],
         "started_at": info["started_at"],
         "stdout": tail(info["stdout_path"], tail_lines),

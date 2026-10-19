@@ -21,6 +21,27 @@ async def test_start_get_kill_process(call_tool):
     assert killed["killed"] is True
 
 
+async def _wait_until_finished(call_tool, pid: int, timeout: float = 15.0) -> dict:
+    deadline = asyncio.get_running_loop().time() + timeout
+    while True:
+        out = await call_tool("get_process_output", {"pid": pid, "tail_lines": 10})
+        if not out["running"]:
+            return out
+        assert out["exit_code"] is None
+        if asyncio.get_running_loop().time() > deadline:
+            raise AssertionError(f"process {pid} still running after {timeout}s")
+        await asyncio.sleep(0.2)
+
+
+async def test_get_process_output_reports_exit_code(call_tool):
+    # `exit N` means the same thing to cmd.exe and /bin/sh.
+    ok = await call_tool("start_process", {"command": "exit 0"})
+    failed = await call_tool("start_process", {"command": "exit 3"})
+
+    assert (await _wait_until_finished(call_tool, ok["pid"]))["exit_code"] == 0
+    assert (await _wait_until_finished(call_tool, failed["pid"]))["exit_code"] == 3
+
+
 async def test_get_process_output_unknown_pid(call_tool):
     r = await call_tool("get_process_output", {"pid": 999999999, "tail_lines": 5})
     assert "error" in r
