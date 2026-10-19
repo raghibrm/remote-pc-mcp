@@ -178,7 +178,7 @@ async def test_typing_and_hotkeys_reach_the_window_exactly(call_tool, tmp_path):
     try:
         if not await _until(focused, timeout=8):
             pytest.skip("the test window never got focus, so nothing was typed")
-        text = "Line 2 ASCII: The quick brown fox 0123456789 !@#$%^&*()_+-=[]{};:'\",.<>/?\|`~\ncafé naïve — done"
+        text = "Line 2 ASCII: The quick brown fox 0123456789 !@#$%^&*()_+-=[]{};:'\",.<>/?\\|`~\ncafé naïve — done"
         assert (await call_tool("type_text", {"text": text}))["success"]
         assert await _until(holds(text)), f"window holds {out.read_text(encoding='utf-8')!r}"
 

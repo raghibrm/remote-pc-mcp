@@ -742,12 +742,14 @@ def move_mouse(x: int, y: int, duration: float = 0.0) -> dict:
 
 @mcp.tool()
 @_off_loop
-def type_text(text: str, interval: float = 0.0) -> dict:
+def type_text(text: str, interval: float = 0.01) -> dict:
     """Type a string into the focused window, exactly as given. interval = seconds between characters.
 
     On Windows every character, including accents, dashes and emoji, is typed
-    as itself and the whole string goes in as one uninterruptible batch (see
-    _keys.py). Elsewhere pyautogui types it, and it skips non-ASCII characters.
+    as itself (see _keys.py). interval=0 sends the whole string as one burst:
+    a browser takes it whole, but Windows 11 Notepad kept 13 of 177
+    characters, so the default leaves 10 ms between characters. Elsewhere
+    pyautogui types it, and it skips non-ASCII characters.
     """
     try:
         with _ui_lock:
@@ -788,15 +790,19 @@ def press_key(key: str) -> dict:
 @mcp.tool()
 @_off_loop
 def scroll(amount: int, x: Optional[int] = None, y: Optional[int] = None) -> dict:
-    """Scroll the mouse wheel. Positive = up, negative = down.
+    """Scroll the mouse wheel by amount notches. Positive = up, negative = down.
 
     Optional (x, y) in take_screenshot's image moves the cursor there first.
     """
+    # On Windows pyautogui passes the amount straight through as wheel units,
+    # 120 to a notch, so scroll(-5) moved a page a few pixels. Elsewhere it
+    # already counts notches.
+    WHEEL_DELTA = 120
     try:
         with _ui_lock:
             if x is not None and y is not None:
                 pyautogui.moveTo(*_to_desktop(x, y))
-            pyautogui.scroll(amount)
+            pyautogui.scroll(amount * WHEEL_DELTA if IS_WINDOWS else amount)
         return {"success": True, "amount": amount}
     except Exception as e:
         return {"error": _safe_error(e)}
