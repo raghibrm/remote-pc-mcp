@@ -4,6 +4,43 @@ All notable changes to this project will be documented here. The format is
 based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this
 project follows semver from 0.2.0 onward.
 
+## [0.6.2] — 2026-10-18
+
+Found by a stress test on a real Windows 11 host (3840x2160 at 225%, Parsec
+running) under load.
+
+### Fixed
+- A slow tool froze the whole server. FastMCP runs a plain function tool on
+  the event loop, so a 1 s CPU sample, a 4K screenshot or a kill wait blocked
+  every other request: five concurrent `system_info` calls took 7.8 s and held
+  `/health` for 7.4 s. Blocking tools now run in a worker thread (the same five
+  calls take 2.1 s, `/health` stays under 0.1 s), and the mouse and keyboard
+  tools share a lock so two clients' input cannot mix.
+- `kill_process` on a `start_process` job ended only the shell and answered
+  `killed: true` while what it launched kept running; a 12-worker job kept
+  every core busy. It now ends the whole job and reports how many processes it
+  ended. Any other PID is still ended alone.
+- `type_text` garbled text: pyautogui sends each key event on its own, other
+  input landed between them, so "Line 2" came out "LINE @", Shift went missing
+  from `)_+{}:`, and whole runs were lost. It also dropped every non-ASCII
+  character. On Windows text now goes in as Unicode key events, so no Shift is
+  involved and accents, dashes and emoji come through. `interval` now defaults
+  to 10 ms between characters, because Windows 11 Notepad drops a fast burst;
+  `interval=0` still sends one burst.
+- `press_key` combos could lose their modifier (`ctrl+s` typed "s"). On
+  Windows each combo now goes in as one SendInput batch, with the extended-key
+  flag for arrows and navigation keys.
+- `scroll` on Windows moved by raw wheel units, 120 to a notch, so `scroll(-5)`
+  barely moved a page. `amount` is now notches on every platform.
+
+### Added
+- `take_screenshot(delay=...)` waits up to 10 s before capturing, because a
+  screenshot taken straight after a click can still show the old screen.
+
+### Changed
+- The agent skill now points to the server's own tool descriptions and this
+  README instead of copying them, so it no longer goes stale with each release.
+
 ## [0.6.1] — 2026-10-18
 
 ### Fixed
