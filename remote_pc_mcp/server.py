@@ -511,7 +511,7 @@ async def download_file(url: str, destination: str) -> dict:
 
 @mcp.tool()
 def take_screenshot(save_path: Optional[str] = None) -> dict:
-    """Capture the primary display. Returns base64-encoded PNG.
+    """Capture the whole desktop, every monitor. Returns base64-encoded PNG.
 
     Requires an interactive desktop session on Windows; pyautogui-driven tools
     cannot reach a Session 0 (service-context) desktop.
@@ -523,7 +523,14 @@ def take_screenshot(save_path: Optional[str] = None) -> dict:
         )
 
     if IS_WINDOWS:
+        # PowerShell is not DPI-aware, so on a display scaled above 100% it
+        # reads a shrunken VirtualScreen and copies only the top-left part of
+        # the real screen. Opting in first gives physical pixels, the same
+        # space pyautogui clicks in. -EncodedCommand carries the DllImport's
+        # double quotes intact, which -Command would mangle.
         ps = f"""
+Add-Type -Namespace RemotePcMcp -Name Dpi -MemberDefinition '[DllImport("user32.dll")] public static extern bool SetProcessDPIAware();'
+[void][RemotePcMcp.Dpi]::SetProcessDPIAware()
 Add-Type -AssemblyName System.Windows.Forms,System.Drawing
 $s = [System.Windows.Forms.SystemInformation]::VirtualScreen
 $b = New-Object System.Drawing.Bitmap($s.Width, $s.Height)
@@ -532,8 +539,9 @@ $g.CopyFromScreen($s.Left, $s.Top, 0, 0, $b.Size)
 $b.Save('{save_path}')
 $g.Dispose(); $b.Dispose()
 """
+        encoded = base64.b64encode(ps.encode("utf-16-le")).decode()
         r = subprocess.run(
-            ["powershell", "-NoProfile", "-Command", ps],
+            ["powershell", "-NoProfile", "-EncodedCommand", encoded],
             capture_output=True,
             text=True,
             timeout=15,

@@ -23,7 +23,7 @@ The transport is the `mcp` SDK's streamable HTTP (`stateless_http=True`), so a s
 | `get_process_output` | Poll stdout/stderr of a background process by PID |
 | `kill_process` | Terminate a process by PID |
 | `download_file` | Download a URL directly to this machine |
-| `take_screenshot` | Capture the primary display — returns base64-encoded PNG |
+| `take_screenshot` | Capture the whole desktop, every monitor — returns base64-encoded PNG |
 | `click` | Click at screen coordinates `(x, y)` — left / right / middle, single or multi-click |
 | `move_mouse` | Move cursor to `(x, y)`, optionally animated |
 | `type_text` | Type a string into the focused window |
