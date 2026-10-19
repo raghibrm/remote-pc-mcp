@@ -22,6 +22,11 @@ from remote_pc_mcp import app_dir
 
 _LOG_FILE = app_dir() / "daemon.log"
 
+# Held for the daemon's whole life, so a second daemon (another sign-in
+# firing the Startup shortcut) sees it taken and leaves instead of competing.
+# The OS releases it when the process exits, however it exits.
+_LOCK_FILE = app_dir() / ".state" / "daemon.lock"
+
 # The server runs as `python -m remote_pc_mcp.server`. Prepending this
 # package's parent to PYTHONPATH makes that resolve in a plain git clone
 # (where nothing is pip-installed); in an installed environment the entry is
@@ -32,6 +37,48 @@ _PKG_PARENT = Path(__file__).resolve().parents[1]
 # Reset to the first value after the server stays up for LONG_RUN_SECONDS.
 _BACKOFF_SCHEDULE = (5, 10, 20, 40, 60)
 _LONG_RUN_SECONDS = 300
+
+# A server this daemon did not start (a manual run, or an older autostart that
+# launches server.py directly) is watched instead of left alone: health is
+# polled, and after this many failures in a row the daemon starts its own.
+_WATCH_INTERVAL_SECONDS = 30
+_WATCH_FAILURES_BEFORE_TAKEOVER = 3
+
+
+def _acquire_lock():
+    """Take the single-daemon lock. Returns the open file holding it, or None
+    when another daemon already has it."""
+    _LOCK_FILE.parent.mkdir(parents=True, exist_ok=True)
+    handle = open(_LOCK_FILE, "a+")
+    try:
+        if os.name == "nt":
+            import msvcrt
+
+            handle.seek(0)
+            msvcrt.locking(handle.fileno(), msvcrt.LK_NBLCK, 1)
+        else:
+            import fcntl
+
+            fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError:
+        handle.close()
+        return None
+    return handle
+
+
+def _watch_until_down(logger: logging.Logger) -> None:
+    """Return once a server this daemon did not start stops answering."""
+    failures = 0
+    while failures < _WATCH_FAILURES_BEFORE_TAKEOVER:
+        time.sleep(_WATCH_INTERVAL_SECONDS)
+        if _server_already_up():
+            failures = 0
+        else:
+            failures += 1
+            logger.warning(
+                "watched server missed a health check (%d of %d)",
+                failures, _WATCH_FAILURES_BEFORE_TAKEOVER,
+            )
 
 
 def _server_already_up() -> bool:
@@ -58,14 +105,20 @@ def _configure_logging() -> logging.Logger:
 
 def main() -> int:
     logger = _configure_logging()
-    if _server_already_up():
-        logger.info("server already healthy on configured port; daemon exiting")
+    lock = _acquire_lock()
+    if lock is None:
+        logger.info("another daemon is already supervising; exiting")
         return 0
-    logger.info("daemon starting (server=%s -m remote_pc_mcp.server)", sys.executable)
     env = os.environ.copy()
     env["PYTHONPATH"] = str(_PKG_PARENT) + os.pathsep + env.get("PYTHONPATH", "")
     backoff_idx = 0
     try:
+        if _server_already_up():
+            # Exiting here used to leave that server unsupervised for good.
+            logger.info("server already running without a daemon; watching its health")
+            _watch_until_down(logger)
+            logger.warning("watched server is down; starting one under this daemon")
+        logger.info("daemon starting (server=%s -m remote_pc_mcp.server)", sys.executable)
         while True:
             started = time.monotonic()
             try:
