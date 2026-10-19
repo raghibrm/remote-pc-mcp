@@ -4,6 +4,30 @@ All notable changes to this project will be documented here. The format is
 based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this
 project follows semver from 0.2.0 onward.
 
+## [0.6.0] — 2026-10-18
+
+### Changed (breaking)
+- `take_screenshot` returns a JPEG image sized for a vision model, plus a
+  JSON block with the image size, the scale, the desktop's geometry, and the
+  path of the full-resolution PNG on the host. It no longer returns
+  `image_base64`. The image is at most 1568 px on its long edge and
+  1,150,000 px in total, the Claude API's standard limits, so the client does
+  not shrink it again. `REMOTE_PC_MCP_SCREEN_MAX_EDGE` and
+  `REMOTE_PC_MCP_SCREEN_MAX_PIXELS` change the limits.
+- `click`, `move_mouse`, and `scroll` take `(x, y)` in that image's pixels,
+  and the server maps them to the desktop. A caller that sent desktop
+  coordinates must switch. With both limits set to `0`, one image pixel is
+  one desktop pixel, counted from the image's top-left corner.
+
+### Fixed
+- On Windows with monitors at different scales, screenshots and clicks
+  disagreed on every monitor whose scale differs from the system's, even
+  after 0.5.1. The server now runs per-monitor DPI-aware and captures with
+  Pillow in-process, so both use physical pixels on every monitor.
+- On Windows with a monitor left of or above the primary one, screenshot
+  pixels were offset from click coordinates. The mapping now includes the
+  offset.
+
 ## [0.5.1] — 2026-10-18
 
 ### Fixed
