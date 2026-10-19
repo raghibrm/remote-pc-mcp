@@ -23,9 +23,9 @@ The transport is the `mcp` SDK's streamable HTTP (`stateless_http=True`), so a s
 | `get_process_output` | Poll stdout/stderr of a background process by PID, plus its exit code once it ends |
 | `kill_process` | Terminate a process by PID |
 | `download_file` | Download a URL directly to this machine |
-| `take_screenshot` | Capture the whole desktop, every monitor — returns base64-encoded PNG |
-| `click` | Click at screen coordinates `(x, y)` — left / right / middle, single or multi-click |
-| `move_mouse` | Move cursor to `(x, y)`, optionally animated |
+| `take_screenshot` | Capture the whole desktop, every monitor, as an image sized for a vision model ([screen coordinates](#screen-coordinates)) |
+| `click` | Click at `(x, y)` in the screenshot — left / right / middle, single or multi-click |
+| `move_mouse` | Move cursor to `(x, y)` in the screenshot, optionally animated |
 | `type_text` | Type a string into the focused window |
 | `press_key` | Press a single key or hotkey combo (e.g. `enter`, `f11`, `ctrl+c`, `win+d`) |
 | `scroll` | Scroll the mouse wheel up or down, optionally at a specific point |
@@ -198,6 +198,8 @@ All env vars are optional except `REMOTE_PC_MCP_TOKEN`.
 | `REMOTE_PC_MCP_MAX_READ_BYTES` | 50 MB | `read_file` upper limit |
 | `REMOTE_PC_MCP_MAX_WRITE_BYTES` | 50 MB | `write_file` upper limit |
 | `REMOTE_PC_MCP_MAX_DOWNLOAD_BYTES` | 2 GB | `download_file` upper limit |
+| `REMOTE_PC_MCP_SCREEN_MAX_EDGE` | `1568` (px) | Longest edge of the `take_screenshot` image. `0` turns the limit off |
+| `REMOTE_PC_MCP_SCREEN_MAX_PIXELS` | `1150000` | Total pixels of the `take_screenshot` image. `0` turns the limit off |
 
 After changing `.env`, restart the server so the new value takes effect:
 
@@ -255,6 +257,14 @@ install.bat --uninstall && install.bat
 - **Windows**: a user must be logged in and the screen unlocked. A service running under Session 0 cannot reach the desktop. The Startup-folder install gives you exactly this — the daemon runs in your user session.
 - **Linux**: needs an X11 or Wayland session. For screenshots specifically, install `scrot`, `gnome-screenshot`, or ImageMagick's `import` — `sudo apt install scrot` is the easiest.
 
+### Screen coordinates
+
+A vision model sees a screenshot shrunk to fit its image limits, and the coordinates it answers with are in that shrunken image. So `take_screenshot` shrinks the desktop itself, to at most `REMOTE_PC_MCP_SCREEN_MAX_EDGE` pixels on the long edge and `REMOTE_PC_MCP_SCREEN_MAX_PIXELS` in total. The defaults match the Claude API's standard image limits, so the client does not shrink it again. The result is a JPEG image plus a JSON block with the image size, the scale, the desktop's geometry, and the path of the full-resolution PNG on the host.
+
+`click`, `move_mouse`, and `scroll` take `(x, y)` in that image's pixels. The server maps each point back to the real desktop, including monitors left of or above the primary one, which have negative desktop coordinates. Each call also returns the `desktop_x`, `desktop_y` it used. The mapping depends only on the desktop's current size, so a client can click without taking a screenshot first, as long as it uses the same image size. Set both limits to `0` for a full-resolution image, one pixel per desktop pixel. Coordinates still count from the image's top-left corner.
+
+On Windows the server runs per-monitor DPI-aware, so the capture and the mouse use physical pixels on every monitor, whatever its scale.
+
 ## Development
 
 Project layout:
@@ -264,6 +274,7 @@ Project layout:
 | `server.py` | The MCP server — tools, auth, transport |
 | `daemon.py` | Supervisor — spawns server, restarts on crash with backoff |
 | `_logging.py` | Shared logging config — one handler for app + uvicorn loggers |
+| `_screen.py` | Screen space: how the screenshot is sized and how its pixels map to the desktop |
 | `install.{bat,sh}` | Single entry point: default installs, `--uninstall` removes |
 
 ### Tests

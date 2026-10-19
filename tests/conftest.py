@@ -143,8 +143,8 @@ def client(server: ServerHandle) -> httpx.Client:
         yield c
 
 
-async def _call_tool(server: ServerHandle, name: str, args: dict) -> dict:
-    """Open a fresh streamable-http MCP session, call one tool, return the parsed result.
+async def _call_tool_result(server: ServerHandle, name: str, args: dict):
+    """Open a fresh streamable-http MCP session, call one tool, return the raw result.
 
     Because the server is stateless, opening a session per call is cheap and is
     also the most realistic way to verify the stateless transport works.
@@ -156,23 +156,38 @@ async def _call_tool(server: ServerHandle, name: str, args: dict) -> dict:
     async with streamable_http_client(server.mcp_url, http_client=http_client) as (read, write, _):
         async with ClientSession(read, write) as session:
             await session.initialize()
-            result = await session.call_tool(name, args)
-            if result.structuredContent is not None:
-                return result.structuredContent
-            import json
-            for item in result.content:
-                text = getattr(item, "text", None)
-                if text:
-                    try:
-                        return json.loads(text)
-                    except json.JSONDecodeError:
-                        return {"_text": text}
-            return {}
+            return await session.call_tool(name, args)
+
+
+async def _call_tool(server: ServerHandle, name: str, args: dict) -> dict:
+    """Call one tool and return its result parsed into a dict."""
+    result = await _call_tool_result(server, name, args)
+    if result.structuredContent is not None:
+        return result.structuredContent
+    import json
+    for item in result.content:
+        text = getattr(item, "text", None)
+        if text:
+            try:
+                return json.loads(text)
+            except json.JSONDecodeError:
+                return {"_text": text}
+    return {}
 
 
 @pytest.fixture
 def call_tool(server: ServerHandle):
     async def _go(name: str, args: dict | None = None) -> dict:
         return await _call_tool(server, name, args or {})
+
+    return _go
+
+
+@pytest.fixture
+def call_tool_content(server: ServerHandle):
+    """Like call_tool, but returns the result's content blocks unparsed."""
+
+    async def _go(name: str, args: dict | None = None) -> list:
+        return (await _call_tool_result(server, name, args or {})).content
 
     return _go

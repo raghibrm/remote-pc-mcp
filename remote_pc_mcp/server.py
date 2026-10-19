@@ -14,13 +14,29 @@ import sys
 
 if platform.system() == "Windows":
     import asyncio
+    import ctypes
 
     asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
+
+    # Per-monitor DPI awareness, set before pyautogui's import asks for the
+    # weaker system-wide kind (which then fails harmlessly). System-wide
+    # awareness scales monitors that differ from the system DPI, and the
+    # screen capture and the cursor scale them differently, so screenshots
+    # and clicks disagree on those monitors. Per-monitor awareness puts both
+    # in true physical pixels everywhere.
+    _PER_MONITOR_AWARE_V2 = ctypes.c_void_p(-4)
+    if not ctypes.windll.user32.SetProcessDpiAwarenessContext(_PER_MONITOR_AWARE_V2):
+        try:
+            ctypes.windll.shcore.SetProcessDpiAwareness(2)  # per-monitor v1, pre-1703
+        except (AttributeError, OSError):
+            pass
 
 from pathlib import Path
 
 import asyncio
 import base64
+import ctypes
+import io
 import json
 import os
 import secrets
@@ -32,7 +48,7 @@ from datetime import datetime, timezone
 from typing import Optional
 
 from remote_pc_mcp import __version__, app_dir
-from remote_pc_mcp import _logging
+from remote_pc_mcp import _logging, _screen
 
 _logging.configure()
 
@@ -41,8 +57,10 @@ import psutil
 import pyautogui
 import uvicorn
 from dotenv import load_dotenv
-from mcp.server.fastmcp import FastMCP
+from mcp.server.fastmcp import FastMCP, Image
 from mcp.server.transport_security import TransportSecuritySettings
+from PIL import Image as PILImage
+from PIL import ImageGrab
 from starlette.applications import Starlette
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
@@ -68,6 +86,12 @@ _MAX_SHELL_TIMEOUT = int(os.getenv("REMOTE_PC_MCP_MAX_SHELL_TIMEOUT", "600"))
 _MAX_READ_BYTES = int(os.getenv("REMOTE_PC_MCP_MAX_READ_BYTES", str(50 * 1024 * 1024)))
 _MAX_WRITE_BYTES = int(os.getenv("REMOTE_PC_MCP_MAX_WRITE_BYTES", str(50 * 1024 * 1024)))
 _MAX_DOWNLOAD_BYTES = int(os.getenv("REMOTE_PC_MCP_MAX_DOWNLOAD_BYTES", str(2 * 1024**3)))
+
+# Screenshot size limits, matching the Claude API's standard image limits so
+# the client never shrinks the image again behind the server's back. 0 turns
+# a limit off; both off means screenshots and clicks use desktop pixels.
+_SCREEN_MAX_EDGE = int(os.getenv("REMOTE_PC_MCP_SCREEN_MAX_EDGE", "1568"))
+_SCREEN_MAX_PIXELS = int(os.getenv("REMOTE_PC_MCP_SCREEN_MAX_PIXELS", "1150000"))
 
 IS_WINDOWS = platform.system() == "Windows"
 _STATE_DIR = _APP_DIR / ".state"
@@ -523,9 +547,49 @@ async def download_file(url: str, destination: str) -> dict:
         return {"error": _safe_error(e)}
 
 
-@mcp.tool()
-def take_screenshot(save_path: Optional[str] = None) -> dict:
-    """Capture the whole desktop, every monitor. Returns base64-encoded PNG.
+# ── Screen space ────────────────────────────────────────────────────────────
+#
+# take_screenshot returns the desktop shrunk to fit a vision model, and click,
+# move_mouse and scroll take coordinates in that image. See _screen.py.
+
+
+def _desktop() -> _screen.Desktop:
+    """The desktop in the coordinates pyautogui moves in.
+
+    On Windows this process is per-monitor DPI-aware (see the top of this
+    module), so these are physical pixels, the same ones the screenshot holds.
+    """
+    if IS_WINDOWS:
+        metric = ctypes.windll.user32.GetSystemMetrics
+        SM_XVIRTUALSCREEN, SM_YVIRTUALSCREEN, SM_CXVIRTUALSCREEN, SM_CYVIRTUALSCREEN = 76, 77, 78, 79
+        return _screen.Desktop(
+            metric(SM_XVIRTUALSCREEN),
+            metric(SM_YVIRTUALSCREEN),
+            metric(SM_CXVIRTUALSCREEN),
+            metric(SM_CYVIRTUALSCREEN),
+        )
+    width, height = pyautogui.size()
+    return _screen.Desktop(0, 0, width, height)
+
+
+def _screen_scale(desktop: _screen.Desktop) -> float:
+    return _screen.scale_for(desktop, _SCREEN_MAX_EDGE, _SCREEN_MAX_PIXELS)
+
+
+def _to_desktop(x: int, y: int) -> tuple[int, int]:
+    desktop = _desktop()
+    return _screen.to_desktop(x, y, desktop, _screen_scale(desktop))
+
+
+@mcp.tool(structured_output=False)
+def take_screenshot(save_path: Optional[str] = None) -> list:
+    """Capture the whole desktop, every monitor, as an image sized for a vision model.
+
+    The image is shrunk to at most REMOTE_PC_MCP_SCREEN_MAX_EDGE pixels on its
+    long edge and REMOTE_PC_MCP_SCREEN_MAX_PIXELS in total (1568 and 1,150,000
+    by default). click, move_mouse and scroll take x, y in this image's pixels,
+    and the server maps them to the real desktop. The full-resolution PNG stays
+    on this machine at the returned path.
 
     Requires an interactive desktop session on Windows; pyautogui-driven tools
     cannot reach a Session 0 (service-context) desktop.
@@ -537,31 +601,12 @@ def take_screenshot(save_path: Optional[str] = None) -> dict:
         )
 
     if IS_WINDOWS:
-        # PowerShell is not DPI-aware, so on a display scaled above 100% it
-        # reads a shrunken VirtualScreen and copies only the top-left part of
-        # the real screen. Opting in first gives physical pixels, the same
-        # space pyautogui clicks in. -EncodedCommand carries the DllImport's
-        # double quotes intact, which -Command would mangle.
-        ps = f"""
-Add-Type -Namespace RemotePcMcp -Name Dpi -MemberDefinition '[DllImport("user32.dll")] public static extern bool SetProcessDPIAware();'
-[void][RemotePcMcp.Dpi]::SetProcessDPIAware()
-Add-Type -AssemblyName System.Windows.Forms,System.Drawing
-$s = [System.Windows.Forms.SystemInformation]::VirtualScreen
-$b = New-Object System.Drawing.Bitmap($s.Width, $s.Height)
-$g = [System.Drawing.Graphics]::FromImage($b)
-$g.CopyFromScreen($s.Left, $s.Top, 0, 0, $b.Size)
-$b.Save('{save_path}')
-$g.Dispose(); $b.Dispose()
-"""
-        encoded = base64.b64encode(ps.encode("utf-16-le")).decode()
-        r = subprocess.run(
-            ["powershell", "-NoProfile", "-EncodedCommand", encoded],
-            capture_output=True,
-            text=True,
-            timeout=15,
-        )
-        if r.returncode != 0:
-            return {"error": _safe_error(RuntimeError(r.stderr.strip()))}
+        # In this per-monitor-aware process the grab covers the whole virtual
+        # desktop in physical pixels, origin at _desktop()'s left and top.
+        try:
+            ImageGrab.grab(all_screens=True).save(save_path)
+        except Exception as e:
+            return {"error": _safe_error(e)}
     else:
         taken = False
         for cmd in [
@@ -576,8 +621,39 @@ $g.Dispose(); $b.Dispose()
         if not taken:
             return {"error": "No screenshot tool found. On Linux install scrot: sudo apt install scrot"}
 
-    data = base64.b64encode(Path(save_path).read_bytes()).decode()
-    return {"success": True, "path": save_path, "image_base64": data, "format": "png"}
+    try:
+        desktop = _desktop()
+        scale = _screen_scale(desktop)
+        width, height = _screen.image_size(desktop, scale)
+        with PILImage.open(save_path) as full:
+            captured = full.size
+            view = full.convert("RGB").resize((width, height), PILImage.LANCZOS)
+        buf = io.BytesIO()
+        view.save(buf, "JPEG", quality=80)
+    except Exception as e:
+        return {"error": _safe_error(e)}
+
+    info = {
+        "success": True,
+        "width": width,
+        "height": height,
+        "coordinates": "click, move_mouse and scroll take x, y in this image's pixels",
+        "scale": round(scale, 4),
+        "desktop": {
+            "left": desktop.left,
+            "top": desktop.top,
+            "width": desktop.width,
+            "height": desktop.height,
+        },
+        "path": save_path,
+    }
+    if captured != (desktop.width, desktop.height):
+        info["warning"] = (
+            f"captured {captured[0]}x{captured[1]} but the desktop is "
+            f"{desktop.width}x{desktop.height}, so clicks may land off target"
+        )
+        logger.warning("take_screenshot size mismatch: %s", info["warning"])
+    return [Image(data=buf.getvalue(), format="jpeg"), info]
 
 
 # ── UI control (pyautogui) ──────────────────────────────────────────────────
@@ -588,20 +664,25 @@ $g.Dispose(); $b.Dispose()
 
 @mcp.tool()
 def click(x: int, y: int, button: str = "left", clicks: int = 1) -> dict:
-    """Click at screen coordinates (x, y). button = 'left' | 'right' | 'middle'."""
+    """Click at (x, y) in take_screenshot's image. button = 'left' | 'right' | 'middle'."""
     try:
-        pyautogui.click(x=x, y=y, clicks=clicks, button=button)
-        return {"success": True, "x": x, "y": y, "button": button, "clicks": clicks}
+        dx, dy = _to_desktop(x, y)
+        pyautogui.click(x=dx, y=dy, clicks=clicks, button=button)
+        return {
+            "success": True, "x": x, "y": y, "desktop_x": dx, "desktop_y": dy,
+            "button": button, "clicks": clicks,
+        }
     except Exception as e:
         return {"error": _safe_error(e)}
 
 
 @mcp.tool()
 def move_mouse(x: int, y: int, duration: float = 0.0) -> dict:
-    """Move the cursor to (x, y). duration > 0 animates the movement."""
+    """Move the cursor to (x, y) in take_screenshot's image. duration > 0 animates the movement."""
     try:
-        pyautogui.moveTo(x=x, y=y, duration=duration)
-        return {"success": True, "x": x, "y": y}
+        dx, dy = _to_desktop(x, y)
+        pyautogui.moveTo(x=dx, y=dy, duration=duration)
+        return {"success": True, "x": x, "y": y, "desktop_x": dx, "desktop_y": dy}
     except Exception as e:
         return {"error": _safe_error(e)}
 
@@ -631,10 +712,13 @@ def press_key(key: str) -> dict:
 
 @mcp.tool()
 def scroll(amount: int, x: Optional[int] = None, y: Optional[int] = None) -> dict:
-    """Scroll the mouse wheel. Positive = up, negative = down. Optional (x, y) anchors at coords."""
+    """Scroll the mouse wheel. Positive = up, negative = down.
+
+    Optional (x, y) in take_screenshot's image moves the cursor there first.
+    """
     try:
         if x is not None and y is not None:
-            pyautogui.moveTo(x, y)
+            pyautogui.moveTo(*_to_desktop(x, y))
         pyautogui.scroll(amount)
         return {"success": True, "amount": amount}
     except Exception as e:
