@@ -240,6 +240,10 @@ explorer shell:startup    # look for remote-pc-mcp.lnk
 
 The streamable HTTP transport is designed so a restart does not brick clients, but the client still has to issue a request to notice the new server. First fix: invoke any tool from this server (e.g. ask your agent to run `system_info`) — the client will retry the connection. If that fails, reconnect the MCP server in your client (Claude Code: `/mcp` ; Cursor: refresh in MCP panel) or restart the client.
 
+**Reachable on the LAN but not over Tailscale?**
+
+Another VPN with its own network adapter on the same PC can block Tailscale traffic while `tailscale ping` still succeeds. NordVPN with Meshnet turned on has done this on Windows. The server listens on every network by default (`REMOTE_PC_MCP_HOST=0.0.0.0`), so point the client's URL at an address it can reach on another private network, such as the PC's LAN or Meshnet address, or turn the other VPN's mesh off.
+
 **Stuck process / port already in use?**
 
 ```bash
